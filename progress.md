@@ -94,3 +94,12 @@
   - 审核: CodeWhale (55s), P0=0, P1=4, P2=4
   - 测试: Qwen Code (82s), 22/22 passed, 81% coverage
   - 验收: Hermes (目标对齐验证通过)
+
+
+## 2026-06-18 20:45
+- Wave 2 完成: Layer 0 沙箱 + Layer 2 持久化 + Circuit Breaker + ContextManager
+  - F007: 沙箱 (200s) → CodeWhale审核(32s) → Qwen测试(154s) → PASSED
+  - F008: 持久化 (505s) → CodeWhale审核(132s) → Qwen测试(154s) → PASSED
+  - F010: 熔断器 (200s) → CodeWhale审核(26s) → Qwen测试(154s) → PASSED
+  - F011: 上下文管理 (354s) → CodeWhale审核(35s) → Qwen测试(154s) → PASSED
+  - 总计: 190/190 测试通过, 92% 覆盖率

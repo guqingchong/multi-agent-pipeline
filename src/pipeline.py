@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pipeline.py — 最简版状态机，支持 init / develop / check / advance 命令。
+"""pipeline.py — 最简版状态机，支持 init / develop / check / advance / resume 命令。
 
 Phase 0-3 流转:
   Phase 0: init       → 创建项目骨架
@@ -8,6 +8,7 @@ Phase 0-3 流转:
   Phase 3: test       → 测试阶段（需 check 通过）
 
 每个 advance 必须通过 check 函数，否则 BLOCK。
+支持 resume 从 checkpoint 恢复（F008）。
 """
 
 from __future__ import annotations
@@ -15,12 +16,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from state_store import StateStore, CheckpointRecord
 
 
 # ───────────────────────────────────────────────────────────────
@@ -166,46 +168,42 @@ def check_test(state: ProjectState) -> Tuple[bool, str]:
 
 
 # ───────────────────────────────────────────────────────────────
-# 数据库层
+# 辅助函数
 # ───────────────────────────────────────────────────────────────
 
-class StateStore:
-    def __init__(self, project_dir: Path) -> None:
-        self.db_path = project_dir / DB_FILENAME
-        self._ensure_table()
+def _get_db_path(base_dir: Path) -> Path:
+    return base_dir / DB_FILENAME
 
-    def _ensure_table(self) -> None:
-        conn = sqlite3.connect(str(self.db_path))
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS project_state (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-            """
-        )
-        conn.commit()
-        conn.close()
 
-    def save(self, state: ProjectState) -> None:
-        conn = sqlite3.connect(str(self.db_path))
-        conn.execute(
-            "INSERT OR REPLACE INTO project_state (key, value) VALUES (?, ?)",
-            ("state", json.dumps(state.to_dict())),
-        )
-        conn.commit()
-        conn.close()
+def _get_store(base_dir: Path) -> StateStore:
+    return StateStore(_get_db_path(base_dir))
 
-    def load(self, name: str) -> Optional[ProjectState]:
-        conn = sqlite3.connect(str(self.db_path))
-        cur = conn.execute(
-            "SELECT value FROM project_state WHERE key = ?", ("state",)
-        )
-        row = cur.fetchone()
-        conn.close()
-        if row is None:
-            return None
-        return ProjectState.from_dict(json.loads(row[0]))
+
+def _write_checkpoint(store: StateStore, project_name: str, state: ProjectState, action: str) -> int:
+    """每个有意义 action 后写入 checkpoint"""
+    return store.write_checkpoint(
+        project_id=project_name,
+        phase=str(state.phase),
+        state_dict=state.to_dict(),
+        agent="pipeline",
+        action=action,
+        result="ok",
+    )
+
+
+def _save_state(store: StateStore, project_name: str, state: ProjectState, action: str) -> None:
+    """保存状态到 legacy 表 + 写入 checkpoint"""
+    store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
+    store.update_project_phase(project_name, str(state.phase))
+    _write_checkpoint(store, project_name, state, action)
+
+
+def _load_state(store: StateStore, project_name: str) -> Optional[ProjectState]:
+    """从 legacy 表加载状态"""
+    raw = store.legacy_load("state")
+    if raw is None:
+        return None
+    return ProjectState.from_dict(json.loads(raw))
 
 
 # ───────────────────────────────────────────────────────────────
@@ -246,8 +244,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     if os.system(f"cd {base_dir} && git init -q") == 0:
         git_init = True
 
-    # 初始化 SQLite
-    store = StateStore(base_dir)
+    # 初始化 SQLite（Layer 2 + 向后兼容）
+    store = _get_store(base_dir)
     state = ProjectState(
         name=project_name,
         phase=Phase.INIT,
@@ -258,7 +256,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         metadata_files=metadata_files,
         db_created=True,
     )
-    store.save(state)
+    _save_state(store, project_name, state, "init")
+    store.create_project(project_id=project_name, name=project_name, current_phase="init")
 
     print(f"[OK] 项目 '{project_name}' 初始化完成")
     print(f"     目录: {base_dir}")
@@ -273,8 +272,8 @@ def cmd_develop(args: argparse.Namespace) -> int:
     """进入开发模式（将 phase 推进到 develop，需先通过 check）"""
     project_name: str = args.project
     base_dir = Path.cwd() / project_name
-    store = StateStore(base_dir)
-    state = store.load(project_name)
+    store = _get_store(base_dir)
+    state = _load_state(store, project_name)
     if state is None:
         print(f"[ERROR] 项目不存在: {project_name}")
         return 1
@@ -291,7 +290,7 @@ def cmd_develop(args: argparse.Namespace) -> int:
 
     state.phase = Phase.DEVELOP
     state.check_results["develop_started"] = True
-    store.save(state)
+    _save_state(store, project_name, state, "develop")
 
     print(f"[OK] 进入 develop 阶段: {project_name}")
     return 0
@@ -301,8 +300,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     """检查当前 phase 是否满足 advance 条件"""
     project_name: str = args.project
     base_dir = Path.cwd() / project_name
-    store = StateStore(base_dir)
-    state = store.load(project_name)
+    store = _get_store(base_dir)
+    state = _load_state(store, project_name)
     if state is None:
         print(f"[ERROR] 项目不存在: {project_name}")
         return 1
@@ -315,7 +314,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     passed, msg = check_fn(state)
     state.check_results[f"check_{phase_name}"] = passed
-    store.save(state)
+    _save_state(store, project_name, state, f"check_{phase_name}")
 
     status = "PASS" if passed else "FAIL"
     print(f"[{status}] check {phase_name}: {msg}")
@@ -326,8 +325,8 @@ def cmd_advance(args: argparse.Namespace) -> int:
     """推进到下一 phase（自动执行 check，未通过则 BLOCK）"""
     project_name: str = args.project
     base_dir = Path.cwd() / project_name
-    store = StateStore(base_dir)
-    state = store.load(project_name)
+    store = _get_store(base_dir)
+    state = _load_state(store, project_name)
     if state is None:
         print(f"[ERROR] 项目不存在: {project_name}")
         return 1
@@ -343,7 +342,7 @@ def cmd_advance(args: argparse.Namespace) -> int:
 
     passed, msg = check_fn(state)
     state.check_results[f"check_{phase_name}"] = passed
-    store.save(state)
+    _save_state(store, project_name, state, f"check_{phase_name}")
 
     if not passed:
         print(f"[BLOCKED] advance blocked: check '{phase_name}' not passed — {msg}")
@@ -356,7 +355,7 @@ def cmd_advance(args: argparse.Namespace) -> int:
         return 0
 
     state.phase = next_phase
-    store.save(state)
+    _save_state(store, project_name, state, f"advance_to_{next_phase}")
     print(f"[OK] 从 {current_phase} 推进到 {next_phase}: {project_name}")
     return 0
 
@@ -365,13 +364,93 @@ def cmd_status(args: argparse.Namespace) -> int:
     """查看项目状态"""
     project_name: str = args.project
     base_dir = Path.cwd() / project_name
-    store = StateStore(base_dir)
-    state = store.load(project_name)
+    store = _get_store(base_dir)
+    state = _load_state(store, project_name)
     if state is None:
         print(f"[ERROR] 项目不存在: {project_name}")
         return 1
 
     print(json.dumps(state.to_dict(), indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    """从最新 checkpoint 恢复项目状态（F008）"""
+    project_name: str = args.project
+    checkpoint_id: Optional[int] = getattr(args, "checkpoint_id", None)
+
+    base_dir = Path.cwd() / project_name
+    if not base_dir.exists():
+        print(f"[ERROR] 项目目录不存在: {base_dir}")
+        return 1
+
+    db_path = _get_db_path(base_dir)
+    if not db_path.exists():
+        print(f"[ERROR] 数据库不存在: {db_path}")
+        return 1
+
+    store = _get_store(base_dir)
+
+    # 1. 获取 checkpoint
+    if checkpoint_id is not None:
+        cp = store.get_checkpoint(checkpoint_id)
+        if cp is None:
+            print(f"[ERROR] checkpoint {checkpoint_id} 不存在")
+            return 1
+    else:
+        cp = store.get_latest_checkpoint(project_name)
+        if cp is None:
+            print(f"[ERROR] 项目没有 checkpoint，无法恢复")
+            return 1
+
+    # 2. 恢复状态
+    state_dict = store.restore_checkpoint(cp.id)
+    if state_dict is None:
+        print(f"[ERROR] checkpoint {cp.id} 状态为空")
+        return 1
+
+    state = ProjectState.from_dict(state_dict)
+
+    # 3. 写回 legacy 表
+    store.legacy_save("state", json.dumps(state_dict, ensure_ascii=False))
+    store.update_project_phase(project_name, str(state.phase))
+
+    # 4. 写入恢复标记 checkpoint
+    _write_checkpoint(store, project_name, state, "resume")
+
+    print(f"[OK] 项目 '{project_name}' 从 checkpoint {cp.id} 恢复成功")
+    print(f"     恢复 Phase: {state.phase}")
+    print(f"     恢复时间: {cp.created_at}")
+    return 0
+
+
+def cmd_rollback(args: argparse.Namespace) -> int:
+    """回滚到指定 checkpoint（F008）"""
+    project_name: str = args.project
+    checkpoint_id: int = args.checkpoint_id
+
+    base_dir = Path.cwd() / project_name
+    if not base_dir.exists():
+        print(f"[ERROR] 项目目录不存在: {base_dir}")
+        return 1
+
+    db_path = _get_db_path(base_dir)
+    if not db_path.exists():
+        print(f"[ERROR] 数据库不存在: {db_path}")
+        return 1
+
+    store = _get_store(base_dir)
+    state_dict = store.rollback(project_name, checkpoint_id)
+    if state_dict is None:
+        print(f"[ERROR] checkpoint {checkpoint_id} 不存在或回滚失败")
+        return 1
+
+    state = ProjectState.from_dict(state_dict)
+    store.legacy_save("state", json.dumps(state_dict, ensure_ascii=False))
+    _write_checkpoint(store, project_name, state, "rollback")
+
+    print(f"[OK] 项目 '{project_name}' 回滚到 checkpoint {checkpoint_id} 成功")
+    print(f"     回滚后 Phase: {state.phase}")
     return 0
 
 
@@ -382,7 +461,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pipeline.py",
-        description="最简版 pipeline 状态机 — Phase 0-3 流转",
+        description="最简版 pipeline 状态机 — Phase 0-3 流转 + SQLite 持久化",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -409,6 +488,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = sub.add_parser("status", help="查看项目状态")
     p_status.add_argument("project", help="项目名")
 
+    # resume (F008)
+    p_resume = sub.add_parser("resume", help="从 checkpoint 恢复项目")
+    p_resume.add_argument("project", help="项目名")
+    p_resume.add_argument("--checkpoint-id", type=int, default=None, help="指定 checkpoint ID（默认最新）")
+
+    # rollback (F008)
+    p_rollback = sub.add_parser("rollback", help="回滚到指定 checkpoint")
+    p_rollback.add_argument("project", help="项目名")
+    p_rollback.add_argument("--checkpoint-id", type=int, required=True, help="checkpoint ID")
+
     return parser
 
 
@@ -422,6 +511,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "check": cmd_check,
         "advance": cmd_advance,
         "status": cmd_status,
+        "resume": cmd_resume,
+        "rollback": cmd_rollback,
     }
 
     handler = handlers.get(args.command)
