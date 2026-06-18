@@ -583,7 +583,7 @@
       "id": "F015",
       "title": "可观测性仪表盘与实时告警",
       "description": "实现可观测性系统：SQLite 存储 + rich/textual 终端仪表盘 + 实时告警。包含执行追踪、成本追踪、质量评估、审计日志、模型健康度。支持 pipeline.py status / budget / model-health / report 命令。",
-      "status": "pending",
+      "status": "passed",
       "owner_agent": "claude",
       "estimated_complexity": "complex",
       "dependencies": [
@@ -612,7 +612,23 @@
           "description": "模型健康度监控可用",
           "payload": "python src/pipeline.py model-health"
         }
-      ]
+      ],
+      "phase_completed": {
+        "develop": "2026-06-18",
+        "review": "2026-06-18",
+        "test": "2026-06-19"
+      },
+      "review_result": {
+        "p0": 0,
+        "p1": 5,
+        "p2": 5,
+        "passed": true
+      },
+      "test_result": {
+        "tests_passed": 624,
+        "tests_total": 624,
+        "coverage": 93
+      }
     },
     {
       "id": "F016",
