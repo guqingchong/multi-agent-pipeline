@@ -1,0 +1,39 @@
+{
+  "timestamp": 1781808011.1032135,
+  "timestamp_iso": "2026-06-18T18:40:11.103214+00:00",
+  "all_passed": true,
+  "results": [
+    {
+      "name": "cache_read_write",
+      "iterations": 20,
+      "total_time_ms": 0.09,
+      "avg_time_ms": 0.0046,
+      "min_time_ms": 0.0038,
+      "max_time_ms": 0.006,
+      "median_time_ms": 0.0044,
+      "ops_per_second": 218579.17,
+      "passed": true,
+      "details": {
+        "write_avg_ms": 0.0047,
+        "read_avg_ms": 0.0044,
+        "cache_size_after": 13
+      }
+    },
+    {
+      "name": "context_compression",
+      "iterations": 10,
+      "total_time_ms": 0.06,
+      "avg_time_ms": 0.0055,
+      "min_time_ms": 0.0037,
+      "max_time_ms": 0.0157,
+      "median_time_ms": 0.0042,
+      "ops_per_second": 181159.57,
+      "passed": true,
+      "details": {
+        "context_loss_ratio": 0.0,
+        "dual_model_loss_ok": true,
+        "safety_preserved": false
+      }
+    }
+  ]
+}

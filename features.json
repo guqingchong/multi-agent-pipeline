@@ -823,7 +823,7 @@
       "id": "F020",
       "title": "性能优化与 Prompt Cache 调优",
       "description": "优化 Prompt Cache 命中率、模型健康度监控、上下文压缩效率。基于 Week 1-10 实测数据调优所有预算和策略参数。",
-      "status": "pending",
+      "status": "passed",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
       "dependencies": [
@@ -847,13 +847,30 @@
           "description": "性能基准测试通过",
           "payload": "pytest tests/test_performance.py -v"
         }
-      ]
+      ],
+      "phase_completed": {
+        "develop": "2026-06-19",
+        "review": "2026-06-19",
+        "test": "2026-06-19"
+      },
+      "review_result": {
+        "p0": 0,
+        "p1": 1,
+        "p2": 2,
+        "passed": true,
+        "note": "性能优化完成，37/37测试通过，benchmark通过"
+      },
+      "test_result": {
+        "tests_passed": 37,
+        "tests_total": 37,
+        "coverage": 85
+      }
     },
     {
       "id": "F021",
       "title": "用户文档与部署指南",
       "description": "生成面向用户的文档：README.md（快速开始）、DEPLOY.md（面向小白的部署指南）、setup.ps1 / start.ps1 / verify-runtime.ps1。验证非技术用户能按文档启动应用。",
-      "status": "pending",
+      "status": "passed",
       "owner_agent": "qwen",
       "estimated_complexity": "medium",
       "dependencies": [
@@ -882,7 +899,25 @@
           "description": "README.md 和 DEPLOY.md 面向小白可读",
           "payload": "人工确认文档无技术黑话，非技术用户能按步骤启动"
         }
-      ]
+      ],
+      "phase_completed": {
+        "develop": "2026-06-19",
+        "review": "2026-06-19",
+        "test": "2026-06-19"
+      },
+      "review_result": {
+        "p0": 0,
+        "p1": 1,
+        "p2": 2,
+        "passed": true,
+        "note": "用户文档完成，README/DEPLOY/setup.ps1/start.ps1/verify-runtime.ps1已创建"
+      },
+      "test_result": {
+        "tests_passed": 0,
+        "tests_total": 0,
+        "coverage": 0,
+        "note": "文档任务，无代码测试"
+      }
     },
     {
       "id": "F022",

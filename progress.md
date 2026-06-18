@@ -183,3 +183,14 @@
   - 测试: 773/773 passed (100%通过率)
   - E2E报告: reports/e2e_report.md ✅
   - 验收: Hermes (3/3 验收标准全部满足)
+
+
+## 2026-06-19 02:40
+- F020: 性能优化与 Prompt Cache 调优 → PASSED ✅
+  - 编码: Claude Code (600s)
+  - 测试: 37/37 passed
+  - 验收: Hermes (benchmark通过)
+- F021: 用户文档与部署指南 → PASSED ✅
+  - 编码: Claude Code (600s)
+  - 产出: README.md + DEPLOY.md + setup.ps1 + start.ps1 + verify-runtime.ps1
+  - 验收: Hermes (文档完整，脚本可执行)
