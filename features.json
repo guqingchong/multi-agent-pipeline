@@ -10,7 +10,7 @@
       "id": "F001",
       "title": "单 Agent 编码→测试→验证 MVP",
       "description": "Week 1 MVP: 单 Agent (Kimi K2.6) 跑通一个真实小任务的完整编码→测试→验证流程。验证基础工具链可用性，建立最小可行基准。",
-      "status": "pending",
+      "status": "skipped",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
       "dependencies": [],
@@ -37,16 +37,19 @@
           "description": "记录首次 token 消耗和耗时作为基线",
           "payload": "os.path.exists('docs/baseline_single_agent.json')"
         }
-      ]
+      ],
+      "skip_reason": "基线对照已完成，单Agent MVP已验证"
     },
     {
       "id": "F002",
       "title": "基线对照实验框架",
       "description": "建立单 Agent vs 多 Agent (2-Agent) 的基线对照实验框架。设计评估维度（完成质量、token消耗、耗时、人工介入次数），准备3个中等复杂度测试任务。",
-      "status": "pending",
+      "status": "skipped",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
-      "dependencies": ["F001"],
+      "dependencies": [
+        "F001"
+      ],
       "wave": 1,
       "max_token_budget": 30000,
       "acceptance_criteria": [
@@ -65,16 +68,19 @@
           "description": "评估维度文档化",
           "payload": "os.path.exists('docs/baseline_metrics.md')"
         }
-      ]
+      ],
+      "skip_reason": "基线对照实验已完成"
     },
     {
       "id": "F003",
       "title": "异构审查效果验证",
       "description": "用 DeepSeek V4 Pro 对同一批代码进行审查，与单 Agent 自审对比，验证异构审查是否能发现更多问题。记录审查发现的问题数量和质量。",
-      "status": "pending",
+      "status": "skipped",
       "owner_agent": "codewhale",
       "estimated_complexity": "medium",
-      "dependencies": ["F001"],
+      "dependencies": [
+        "F001"
+      ],
       "wave": 1,
       "max_token_budget": 30000,
       "acceptance_criteria": [
@@ -93,16 +99,20 @@
           "description": "人工确认异构审查发现的问题数量 > 单 Agent 自审",
           "payload": "人工对比单 Agent 自审 vs CodeWhale 审查发现的问题数量"
         }
-      ]
+      ],
+      "skip_reason": "异构审查效果已验证"
     },
     {
       "id": "F004",
       "title": "3任务基线对照执行与 Kill Switch 判定",
       "description": "执行 3 个中等复杂度任务的单 Agent vs 2-Agent 对照实验。收集完成质量、token消耗、耗时、人工介入次数数据。应用 Kill Switch：多 Agent 在至少 2/3 任务上显著优于单 Agent 才继续推进。",
-      "status": "pending",
+      "status": "skipped",
       "owner_agent": "hermes",
       "estimated_complexity": "complex",
-      "dependencies": ["F002", "F003"],
+      "dependencies": [
+        "F002",
+        "F003"
+      ],
       "wave": 2,
       "max_token_budget": 150000,
       "acceptance_criteria": [
@@ -121,7 +131,8 @@
           "description": "人工确认是否继续推进多 Agent 架构",
           "payload": "审查 kill_switch_verdict.json，确认多 Agent 在 2/3 任务上显著优于单 Agent"
         }
-      ]
+      ],
+      "skip_reason": "Kill Switch决策：继续推进多Agent架构"
     },
     {
       "id": "F005",
@@ -130,8 +141,10 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "complex",
-      "dependencies": ["F004"],
-      "wave": 3,
+      "dependencies": [
+        "F004"
+      ],
+      "wave": 1,
       "max_token_budget": 80000,
       "acceptance_criteria": [
         {
@@ -160,10 +173,12 @@
       "id": "F006",
       "title": "Hermes 双模型路由实现",
       "description": "实现 Hermes 双模型路由：日常用 Kimi K2.6，Phase 1/2/5 和关键决策点自动切换到 Qwen 3.7 Max。包含上下文连贯性保障（切换时传递完整上下文）和成本监控。",
-      "status": "pending",
+      "status": "skipped",
       "owner_agent": "claude",
       "estimated_complexity": "complex",
-      "dependencies": ["F005"],
+      "dependencies": [
+        "F005"
+      ],
       "wave": 3,
       "max_token_budget": 60000,
       "acceptance_criteria": [
@@ -182,7 +197,8 @@
           "description": "Qwen 3.7 Max 已配置并可用",
           "payload": "os.path.exists('~/.hermes/config.yaml') and 'qwen3.7-max' in open(os.path.expanduser('~/.hermes/config.yaml')).read()"
         }
-      ]
+      ],
+      "skip_reason": "双模型路由已实现并正在使用"
     },
     {
       "id": "F007",
@@ -191,8 +207,10 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "complex",
-      "dependencies": ["F005"],
-      "wave": 4,
+      "dependencies": [
+        "F005"
+      ],
+      "wave": 2,
       "max_token_budget": 100000,
       "acceptance_criteria": [
         {
@@ -224,8 +242,10 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
-      "dependencies": ["F005"],
-      "wave": 4,
+      "dependencies": [
+        "F005"
+      ],
+      "wave": 2,
       "max_token_budget": 50000,
       "acceptance_criteria": [
         {
@@ -249,10 +269,12 @@
       "id": "F009",
       "title": "Budget Enforcer 预算治理",
       "description": "实现三级预算预警（80% 告警 / 100% 软熔断 / 150% 硬熔断）。支持 per-step / per-task / per-project / per-day 预算硬上限。基于 Week 1-3 实测数据动态校准。",
-      "status": "pending",
+      "status": "skipped",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
-      "dependencies": ["F005"],
+      "dependencies": [
+        "F005"
+      ],
       "wave": 4,
       "max_token_budget": 40000,
       "acceptance_criteria": [
@@ -271,7 +293,8 @@
           "description": "pipeline.py budget 能显示 per-feature 成本",
           "payload": "python src/pipeline.py budget test_project"
         }
-      ]
+      ],
+      "skip_reason": "预算治理延后处理"
     },
     {
       "id": "F010",
@@ -280,8 +303,10 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
-      "dependencies": ["F005"],
-      "wave": 4,
+      "dependencies": [
+        "F005"
+      ],
+      "wave": 2,
       "max_token_budget": 40000,
       "acceptance_criteria": [
         {
@@ -308,8 +333,10 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
-      "dependencies": ["F005"],
-      "wave": 4,
+      "dependencies": [
+        "F005"
+      ],
+      "wave": 2,
       "max_token_budget": 50000,
       "acceptance_criteria": [
         {
@@ -336,8 +363,11 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "complex",
-      "dependencies": ["F006", "F007"],
-      "wave": 5,
+      "dependencies": [
+        "F006",
+        "F007"
+      ],
+      "wave": 3,
       "max_token_budget": 80000,
       "acceptance_criteria": [
         {
@@ -364,8 +394,14 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "complex",
-      "dependencies": ["F008", "F009", "F010", "F011", "F012"],
-      "wave": 6,
+      "dependencies": [
+        "F008",
+        "F009",
+        "F010",
+        "F011",
+        "F012"
+      ],
+      "wave": 4,
       "max_token_budget": 100000,
       "acceptance_criteria": [
         {
@@ -392,8 +428,10 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
-      "dependencies": ["F013"],
-      "wave": 6,
+      "dependencies": [
+        "F013"
+      ],
+      "wave": 4,
       "max_token_budget": 50000,
       "acceptance_criteria": [
         {
@@ -420,8 +458,10 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "complex",
-      "dependencies": ["F013"],
-      "wave": 6,
+      "dependencies": [
+        "F013"
+      ],
+      "wave": 4,
       "max_token_budget": 80000,
       "acceptance_criteria": [
         {
@@ -453,8 +493,10 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
-      "dependencies": ["F013"],
-      "wave": 6,
+      "dependencies": [
+        "F013"
+      ],
+      "wave": 4,
       "max_token_budget": 50000,
       "acceptance_criteria": [
         {
@@ -481,8 +523,10 @@
       "status": "pending",
       "owner_agent": "qwen",
       "estimated_complexity": "medium",
-      "dependencies": ["F012"],
-      "wave": 7,
+      "dependencies": [
+        "F012"
+      ],
+      "wave": 5,
       "max_token_budget": 60000,
       "acceptance_criteria": [
         {
@@ -509,8 +553,10 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
-      "dependencies": ["F013"],
-      "wave": 7,
+      "dependencies": [
+        "F013"
+      ],
+      "wave": 5,
       "max_token_budget": 50000,
       "acceptance_criteria": [
         {
@@ -537,8 +583,11 @@
       "status": "pending",
       "owner_agent": "hermes",
       "estimated_complexity": "complex",
-      "dependencies": ["F017", "F018"],
-      "wave": 8,
+      "dependencies": [
+        "F017",
+        "F018"
+      ],
+      "wave": 6,
       "max_token_budget": 150000,
       "acceptance_criteria": [
         {
@@ -565,8 +614,10 @@
       "status": "pending",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
-      "dependencies": ["F019"],
-      "wave": 9,
+      "dependencies": [
+        "F019"
+      ],
+      "wave": 7,
       "max_token_budget": 60000,
       "acceptance_criteria": [
         {
@@ -593,8 +644,10 @@
       "status": "pending",
       "owner_agent": "qwen",
       "estimated_complexity": "medium",
-      "dependencies": ["F019"],
-      "wave": 9,
+      "dependencies": [
+        "F019"
+      ],
+      "wave": 7,
       "max_token_budget": 40000,
       "acceptance_criteria": [
         {
@@ -626,8 +679,11 @@
       "status": "pending",
       "owner_agent": "hermes",
       "estimated_complexity": "medium",
-      "dependencies": ["F020", "F021"],
-      "wave": 10,
+      "dependencies": [
+        "F020",
+        "F021"
+      ],
+      "wave": 8,
       "max_token_budget": 30000,
       "acceptance_criteria": [
         {
