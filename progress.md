@@ -158,3 +158,11 @@
   - 审核: 超时 (文件已检查)
   - 测试: 88/88 passed
   - 验收: Hermes (目标对齐验证通过)
+
+
+## 2026-06-19 01:44
+- F017 修复: Qwen Code 修复 FallbackManager 11个测试失败
+  - 修复者: Qwen Code (139s)
+  - 修复内容: 补充导入 AdapterStatus + create_adapter，解决双路径导入
+  - 修复结果: 61/61 全部通过 ✅
+  - F017 状态更新: passed (完整)

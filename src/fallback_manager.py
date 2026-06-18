@@ -14,13 +14,26 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
-from src.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError, CircuitState, ResilienceManager
-from src.adapters import (
-    BaseAdapter,
-    AgentResult,
-    ClaudeCodeAdapter,
-    QwenCodeAdapter,
-)
+try:
+    from circuit_breaker import CircuitBreaker, CircuitBreakerOpenError, CircuitState, ResilienceManager
+    from adapters import (
+        BaseAdapter,
+        AgentResult,
+        AdapterStatus,
+        ClaudeCodeAdapter,
+        QwenCodeAdapter,
+        create_adapter,
+    )
+except ImportError:
+    from src.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError, CircuitState, ResilienceManager
+    from src.adapters import (
+        BaseAdapter,
+        AgentResult,
+        AdapterStatus,
+        ClaudeCodeAdapter,
+        QwenCodeAdapter,
+        create_adapter,
+    )
 
 T = TypeVar("T")
 

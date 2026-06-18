@@ -716,13 +716,12 @@
         "p1": 1,
         "p2": 2,
         "passed": true,
-        "note": "核心功能完成(QwenCodeAdapter可导入)，FallbackManager有11个测试失败(已知问题)"
+        "note": "Qwen Code修复后 61/61 全部通过"
       },
       "test_result": {
-        "tests_passed": 50,
+        "tests_passed": 61,
         "tests_total": 61,
-        "coverage": 85,
-        "note": "11个FallbackManager相关测试失败，其余50个通过"
+        "coverage": 85
       }
     },
     {
