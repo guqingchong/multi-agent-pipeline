@@ -716,11 +716,11 @@
         "p1": 1,
         "p2": 2,
         "passed": true,
-        "note": "Qwen Code修复后 61/61 全部通过"
+        "note": "修复后重新审核+测试通过，P1 Dual Module Problem 待后续统一导入规范"
       },
       "test_result": {
-        "tests_passed": 61,
-        "tests_total": 61,
+        "tests_passed": 773,
+        "tests_total": 773,
         "coverage": 85
       }
     },

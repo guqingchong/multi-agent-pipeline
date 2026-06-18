@@ -166,3 +166,12 @@
   - 修复内容: 补充导入 AdapterStatus + create_adapter，解决双路径导入
   - 修复结果: 61/61 全部通过 ✅
   - F017 状态更新: passed (完整)
+
+
+## 2026-06-19 01:58
+- F017 最终验收: 修复后重新审核+测试通过 ✅
+  - 修复: Qwen Code (139s)
+  - 重新审核: CodeWhale (476s), P0=0
+  - 重新测试: Qwen Code (202s), 773/773 passed
+  - 最终验收: Hermes (目标对齐验证通过)
+  - 遗留 P1: Dual Module Problem (待统一导入规范)
