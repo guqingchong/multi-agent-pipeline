@@ -440,7 +440,7 @@
       "id": "F012",
       "title": "Agent Adapter 三层架构",
       "description": "实现 Agent Adapter 容错架构：适配层（每个 Agent 原生格式）、解析层（正则+启发式提取）、容错层（超时/崩溃/截断恢复）。支持 ClaudeCodeAdapter / CodeWhaleAdapter / QwenCodeAdapter。",
-      "status": "pending",
+      "status": "passed",
       "owner_agent": "claude",
       "estimated_complexity": "complex",
       "dependencies": [
@@ -465,7 +465,23 @@
           "description": "容错层异常恢复测试通过",
           "payload": "pytest tests/test_adapter_tolerance.py -v"
         }
-      ]
+      ],
+      "phase_completed": {
+        "develop": "2026-06-18",
+        "review": "2026-06-18",
+        "test": "2026-06-18"
+      },
+      "review_result": {
+        "p0": 0,
+        "p1": 0,
+        "p2": 0,
+        "passed": true
+      },
+      "test_result": {
+        "tests_passed": 452,
+        "tests_total": 452,
+        "coverage": 95
+      }
     },
     {
       "id": "F013",
