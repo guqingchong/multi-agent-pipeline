@@ -138,7 +138,7 @@
       "id": "F005",
       "title": "最简版 pipeline.py 状态机",
       "description": "实现最简版 pipeline.py，支持 init / develop / check / advance 命令。状态机管理 Phase 0-3 流转，每个 advance 必须通过 check 函数。",
-      "status": "pending",
+      "status": "passed",
       "owner_agent": "claude",
       "estimated_complexity": "complex",
       "dependencies": [
@@ -167,7 +167,23 @@
           "description": "状态机单元测试通过",
           "payload": "pytest tests/test_pipeline_state_machine.py -v"
         }
-      ]
+      ],
+      "phase_completed": {
+        "develop": "2026-06-18",
+        "review": "2026-06-18",
+        "test": "2026-06-18"
+      },
+      "review_result": {
+        "p0": 0,
+        "p1": 4,
+        "p2": 4,
+        "passed": true
+      },
+      "test_result": {
+        "tests_passed": 22,
+        "tests_total": 22,
+        "coverage": 81
+      }
     },
     {
       "id": "F006",
