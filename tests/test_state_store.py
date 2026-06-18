@@ -528,14 +528,25 @@ def test_checkpoint_written_on_every_action(init_project: str, tmp_cwd: Path) ->
     assert len(develop_cps) == 1
 
     # advance 到 review（需要 code_written）
-    state = _load_state(store, project_name)
-    assert state is not None
-    state.check_results["code_written"] = True
-    _save_state(store, project_name, state, "set_code_written")
-
+    # 创建代码文件使 check_develop 通过
+    (tmp_cwd / project_name / "src" / "test.py").write_text("# test code")
+    
+    # 创建 git commit（check_develop 需要）
+    import subprocess
+    proj_dir = tmp_cwd / project_name
+    subprocess.run(["git", "-C", str(proj_dir), "config", "user.email", "test@test.com"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(proj_dir), "config", "user.name", "Test"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(proj_dir), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(proj_dir), "commit", "-m", "test commit"], check=True, capture_output=True)
+    
+    # 更新 progress.md（check_develop 需要）
+    progress_file = proj_dir / "progress.md"
+    progress_content = progress_file.read_text()
+    progress_file.write_text(progress_content + "\n## develop\n- 代码已编写\n")
+    
     cmd_advance(type("Args", (), {"project": project_name})())
     cps = store.list_checkpoints(project_name)
-    advance_cps = [c for c in cps if c.action == "advance_to_review"]
+    advance_cps = [c for c in cps if c.action == "advance:develop->test"]
     assert len(advance_cps) == 1
 
 

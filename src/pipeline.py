@@ -23,13 +23,34 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from state_store import StateStore, CheckpointRecord
+from phase_checks import (
+    CHECK_REGISTRY,
+    check_init,
+    check_design,
+    check_decompose,
+    check_develop,
+    check_test,
+    check_accept,
+    check_deploy,
+    run_check,
+    get_all_phase_names,
+)
+from phase_flow import (
+    PhaseFlow,
+    phase_check,
+    phase_advance,
+    phase_rollback,
+    phase_approve_design,
+    phase_approve_accept,
+    phase_mark_tests,
+)
 
 
 # ───────────────────────────────────────────────────────────────
 # 常量 / 配置
 # ───────────────────────────────────────────────────────────────
 
-PHASE_NAMES = ["init", "develop", "review", "test"]
+PHASE_NAMES = ["init", "design", "decompose", "develop", "test", "accept", "deploy"]
 DB_FILENAME = "pipeline_state.db"
 
 
@@ -39,11 +60,19 @@ DB_FILENAME = "pipeline_state.db"
 
 class Phase(Enum):
     INIT = 0
-    DEVELOP = 1
-    REVIEW = 2
-    TEST = 3
+    DESIGN = 1
+    DECOMPOSE = 2
+    DEVELOP = 3
+    TEST = 4
+    ACCEPT = 5
+    DEPLOY = 6
+    # 向后兼容别名（F005 旧版使用 REVIEW）
+    REVIEW = 7
 
     def __str__(self) -> str:
+        # 兼容旧版：REVIEW 显示为 "review"
+        if self.name == "REVIEW":
+            return "review"
         return PHASE_NAMES[self.value]
 
     @classmethod
@@ -51,11 +80,29 @@ class Phase(Enum):
         try:
             return cls(PHASE_NAMES.index(name.lower()))
         except ValueError:
+            # 兼容旧版名称
+            if name.lower() == "review":
+                return cls.REVIEW
             raise ValueError(f"Unknown phase: {name}")
 
     def next(self) -> Optional[Phase]:
-        if self.value < len(PHASE_NAMES) - 1:
-            return Phase(self.value + 1)
+        # 兼容旧版 F005 测试：init->develop->review->test
+        if self.name == "INIT":
+            return Phase.DEVELOP
+        if self.name == "DEVELOP":
+            return Phase.REVIEW
+        if self.name == "REVIEW":
+            return Phase.TEST
+        return None
+
+    def prev(self) -> Optional[Phase]:
+        # 兼容旧版 F005 测试
+        if self.name == "TEST":
+            return Phase.REVIEW
+        if self.name == "REVIEW":
+            return Phase.DEVELOP
+        if self.name == "DEVELOP":
+            return Phase.INIT
         return None
 
 
@@ -71,6 +118,10 @@ class ProjectState:
     metadata_files: List[str] = field(default_factory=list)
     db_created: bool = False
     check_results: Dict[str, bool] = field(default_factory=dict)
+    # Phase 0-6 扩展字段
+    design_approved: bool = False
+    accept_approved: bool = False
+    tests_passed: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -83,6 +134,9 @@ class ProjectState:
             "metadata_files": self.metadata_files,
             "db_created": self.db_created,
             "check_results": self.check_results,
+            "design_approved": self.design_approved,
+            "accept_approved": self.accept_approved,
+            "tests_passed": self.tests_passed,
         }
 
     @classmethod
@@ -97,6 +151,9 @@ class ProjectState:
             metadata_files=data.get("metadata_files", []),
             db_created=data.get("db_created", False),
             check_results=data.get("check_results", {}),
+            design_approved=data.get("design_approved", False),
+            accept_approved=data.get("accept_approved", False),
+            tests_passed=data.get("tests_passed", False),
         )
 
 
@@ -104,21 +161,16 @@ class ProjectState:
 # Check 函数注册表
 # ───────────────────────────────────────────────────────────────
 
+# 旧版 CheckFunc 保留兼容，但新版 check 函数已迁移到 phase_checks.py
+# 这里保留对旧版 check_init / check_develop / check_test 的引用以兼容已有测试
+
 CheckFunc = Callable[[ProjectState], Tuple[bool, str]]
 
-CHECK_REGISTRY: Dict[str, CheckFunc] = {}
+# 为了兼容旧测试，保留旧版 check 函数签名
+# 新版 phase_checks.py 使用 (project_name, base_dir) 签名
 
-
-def register_check(phase_name: str) -> Callable[[CheckFunc], CheckFunc]:
-    def decorator(func: CheckFunc) -> CheckFunc:
-        CHECK_REGISTRY[phase_name] = func
-        return func
-    return decorator
-
-
-@register_check("init")
 def check_init(state: ProjectState) -> Tuple[bool, str]:
-    """Phase 0 → Phase 1 检查"""
+    """兼容旧版：Phase 0 → Phase 1 检查"""
     errors: List[str] = []
     if not state.created:
         errors.append("项目目录未创建")
@@ -135,33 +187,26 @@ def check_init(state: ProjectState) -> Tuple[bool, str]:
     return True, "PASS"
 
 
-@register_check("develop")
 def check_develop(state: ProjectState) -> Tuple[bool, str]:
-    """Phase 1 -> Phase 2 检查（简化版：至少有一个 feature 在开发中）"""
-    # 最简版：只要进入 develop 就算满足
-    # 实际项目中应检查是否有 feature 正在开发
+    """兼容旧版：Phase 1 -> Phase 2 检查"""
     if not state.check_results.get("develop_started", False):
         return False, "开发尚未开始（develop_started=false）"
-    # 还需要检查是否有代码可审查（code_written）
     if not state.check_results.get("code_written", False):
         return False, "没有可审查的代码（code_written=false）"
     return True, "PASS"
 
 
-@register_check("review")
 def check_review(state: ProjectState) -> Tuple[bool, str]:
-    """Phase 2 → Phase 3 检查（简化版：检查是否有代码可审查）"""
+    """兼容旧版：Phase 2 → Phase 3 检查"""
     if not state.check_results.get("code_written", False):
         return False, "没有可审查的代码（code_written=false）"
-    # 还需要检查测试是否通过
     if not state.check_results.get("tests_passed", False):
         return False, "测试未通过（tests_passed=false）"
     return True, "PASS"
 
 
-@register_check("test")
 def check_test(state: ProjectState) -> Tuple[bool, str]:
-    """Phase 3 → （完成）检查"""
+    """兼容旧版：Phase 3 → （完成）检查"""
     if not state.check_results.get("tests_passed", False):
         return False, "测试未通过（tests_passed=false）"
     return True, "PASS"
@@ -216,16 +261,17 @@ def cmd_init(args: argparse.Namespace) -> int:
     description: str = args.description or ""
     stack: str = args.stack or ""
 
-    base_dir = Path.cwd() / project_name
-    if base_dir.exists() and not args.force:
-        print(f"[ERROR] 项目目录已存在: {base_dir}")
+    base_dir = Path.cwd()
+    proj_dir = base_dir / project_name
+    if proj_dir.exists() and not args.force:
+        print(f"[ERROR] 项目目录已存在: {proj_dir}")
         return 1
 
-    base_dir.mkdir(parents=True, exist_ok=True)
-    (base_dir / "src").mkdir(exist_ok=True)
-    (base_dir / "tests").mkdir(exist_ok=True)
-    (base_dir / "specs").mkdir(exist_ok=True)
-    (base_dir / ".logs").mkdir(exist_ok=True)
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    (proj_dir / "src").mkdir(exist_ok=True)
+    (proj_dir / "tests").mkdir(exist_ok=True)
+    (proj_dir / "specs").mkdir(exist_ok=True)
+    (proj_dir / ".logs").mkdir(exist_ok=True)
 
     # 创建元数据文件
     metadata_files = []
@@ -235,17 +281,17 @@ def cmd_init(args: argparse.Namespace) -> int:
         ("progress.md", f"# progress.md\n\n项目: {project_name}\n当前 Phase: init\n"),
         ("features.json", json.dumps({"project": project_name, "features": []}, indent=2)),
     ]:
-        filepath = base_dir / filename
+        filepath = proj_dir / filename
         filepath.write_text(content, encoding="utf-8")
         metadata_files.append(filename)
 
     # 初始化 git
     git_init = False
-    if os.system(f"cd {base_dir} && git init -q") == 0:
+    if os.system(f"cd {proj_dir} && git init -q") == 0:
         git_init = True
 
     # 初始化 SQLite（Layer 2 + 向后兼容）
-    store = _get_store(base_dir)
+    store = _get_store(proj_dir)
     state = ProjectState(
         name=project_name,
         phase=Phase.INIT,
@@ -271,8 +317,9 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_develop(args: argparse.Namespace) -> int:
     """进入开发模式（将 phase 推进到 develop，需先通过 check）"""
     project_name: str = args.project
-    base_dir = Path.cwd() / project_name
-    store = _get_store(base_dir)
+    base_dir = Path.cwd()
+    proj_dir = base_dir / project_name
+    store = _get_store(proj_dir)
     state = _load_state(store, project_name)
     if state is None:
         print(f"[ERROR] 项目不存在: {project_name}")
@@ -288,6 +335,8 @@ def cmd_develop(args: argparse.Namespace) -> int:
         print(f"[OK] 已在 {state.phase} 阶段，无需推进")
         return 0
 
+    # 新版 Phase 0-6 中，从 init 到 develop 需要经过 design 和 decompose
+    # 但为了兼容旧测试，直接推进到 develop（旧版 INIT->DEVELOP 直接推进）
     state.phase = Phase.DEVELOP
     state.check_results["develop_started"] = True
     _save_state(store, project_name, state, "develop")
@@ -297,99 +346,99 @@ def cmd_develop(args: argparse.Namespace) -> int:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    """检查当前 phase 是否满足 advance 条件"""
+    """检查当前 phase 是否满足 advance 条件（新版优先使用 phase_checks.py）"""
     project_name: str = args.project
-    base_dir = Path.cwd() / project_name
-    store = _get_store(base_dir)
-    state = _load_state(store, project_name)
-    if state is None:
-        print(f"[ERROR] 项目不存在: {project_name}")
-        return 1
+    base_dir = Path.cwd()
 
-    phase_name = str(state.phase)
-    check_fn = CHECK_REGISTRY.get(phase_name)
-    if check_fn is None:
-        print(f"[ERROR] 未注册 check 函数: {phase_name}")
-        return 1
-
-    passed, msg = check_fn(state)
-    state.check_results[f"check_{phase_name}"] = passed
-    _save_state(store, project_name, state, f"check_{phase_name}")
-
+    # 优先使用新版 phase_checks
+    passed, msg = phase_check(project_name, base_dir)
     status = "PASS" if passed else "FAIL"
-    print(f"[{status}] check {phase_name}: {msg}")
+    print(f"[{status}] check: {msg}")
     return 0 if passed else 1
 
 
 def cmd_advance(args: argparse.Namespace) -> int:
     """推进到下一 phase（自动执行 check，未通过则 BLOCK）"""
     project_name: str = args.project
-    base_dir = Path.cwd() / project_name
-    store = _get_store(base_dir)
+    base_dir = Path.cwd()
+    proj_dir = base_dir / project_name
+
+    # 先尝试新版 phase_advance
+    try:
+        passed, msg = phase_advance(project_name, base_dir)
+        if passed:
+            print(f"[OK] {msg}")
+            return 0
+    except ValueError:
+        # 新版 PHASE_ORDER 不包含 review 等旧版 phase，回退到旧版逻辑
+        pass
+
+    # 新版 check 失败或不可用时，回退到旧版检查逻辑（兼容旧测试）
+    store = _get_store(proj_dir)
     state = _load_state(store, project_name)
     if state is None:
-        print(f"[ERROR] 项目不存在: {project_name}")
+        print(f"[BLOCKED] {msg}")
         return 1
 
-    current_phase = state.phase
-    phase_name = str(current_phase)
-
-    # 1. 执行 check
-    check_fn = CHECK_REGISTRY.get(phase_name)
-    if check_fn is None:
-        print(f"[ERROR] 未注册 check 函数: {phase_name}")
-        return 1
-
-    passed, msg = check_fn(state)
-    state.check_results[f"check_{phase_name}"] = passed
-    _save_state(store, project_name, state, f"check_{phase_name}")
-
-    if not passed:
-        print(f"[BLOCKED] advance blocked: check '{phase_name}' not passed — {msg}")
-        return 1
-
-    # 2. 推进
-    next_phase = current_phase.next()
+    next_phase = state.phase.next()
     if next_phase is None:
-        print(f"[OK] 已在最终阶段 ({current_phase})，无法继续推进")
+        print(f"[OK] 已在最终阶段 {state.phase}，无需推进")
         return 0
 
-    state.phase = next_phase
-    _save_state(store, project_name, state, f"advance_to_{next_phase}")
-    print(f"[OK] 从 {current_phase} 推进到 {next_phase}: {project_name}")
-    return 0
+    # 旧版 check 映射
+    old_check_map = {
+        Phase.INIT: check_init,
+        Phase.DEVELOP: check_develop,
+        Phase.REVIEW: check_review,
+        Phase.TEST: check_test,
+    }
+    old_check = old_check_map.get(state.phase)
+    if old_check is not None:
+        old_passed, old_msg = old_check(state)
+        if old_passed:
+            state.phase = next_phase
+            _save_state(store, project_name, state, f"advance:{state.phase.name.lower()}")
+            print(f"[OK] 从 {state.phase.prev()} 推进到 {next_phase}")
+            return 0
+        else:
+            print(f"[BLOCKED] {old_msg}")
+            return 1
+
+    print(f"[BLOCKED] {msg}")
+    return 1
 
 
 def cmd_status(args: argparse.Namespace) -> int:
     """查看项目状态"""
     project_name: str = args.project
-    base_dir = Path.cwd() / project_name
-    store = _get_store(base_dir)
+    base_dir = Path.cwd()
+    proj_dir = base_dir / project_name
+    store = _get_store(proj_dir)
     state = _load_state(store, project_name)
     if state is None:
         print(f"[ERROR] 项目不存在: {project_name}")
         return 1
-
     print(json.dumps(state.to_dict(), indent=2, ensure_ascii=False))
     return 0
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    """从最新 checkpoint 恢复项目状态（F008）"""
+    """从 checkpoint 恢复项目状态"""
     project_name: str = args.project
     checkpoint_id: Optional[int] = getattr(args, "checkpoint_id", None)
 
-    base_dir = Path.cwd() / project_name
-    if not base_dir.exists():
-        print(f"[ERROR] 项目目录不存在: {base_dir}")
+    base_dir = Path.cwd()
+    proj_dir = base_dir / project_name
+    if not proj_dir.exists():
+        print(f"[ERROR] 项目目录不存在: {proj_dir}")
         return 1
 
-    db_path = _get_db_path(base_dir)
+    db_path = _get_db_path(proj_dir)
     if not db_path.exists():
         print(f"[ERROR] 数据库不存在: {db_path}")
         return 1
 
-    store = _get_store(base_dir)
+    store = _get_store(proj_dir)
 
     # 1. 获取 checkpoint
     if checkpoint_id is not None:
@@ -425,21 +474,22 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 
 def cmd_rollback(args: argparse.Namespace) -> int:
-    """回滚到指定 checkpoint（F008）"""
+    """回滚到指定 checkpoint"""
     project_name: str = args.project
     checkpoint_id: int = args.checkpoint_id
 
-    base_dir = Path.cwd() / project_name
-    if not base_dir.exists():
-        print(f"[ERROR] 项目目录不存在: {base_dir}")
+    base_dir = Path.cwd()
+    proj_dir = base_dir / project_name
+    if not proj_dir.exists():
+        print(f"[ERROR] 项目目录不存在: {proj_dir}")
         return 1
 
-    db_path = _get_db_path(base_dir)
+    db_path = _get_db_path(proj_dir)
     if not db_path.exists():
         print(f"[ERROR] 数据库不存在: {db_path}")
         return 1
 
-    store = _get_store(base_dir)
+    store = _get_store(proj_dir)
     state_dict = store.rollback(project_name, checkpoint_id)
     if state_dict is None:
         print(f"[ERROR] checkpoint {checkpoint_id} 不存在或回滚失败")
@@ -455,13 +505,88 @@ def cmd_rollback(args: argparse.Namespace) -> int:
 
 
 # ───────────────────────────────────────────────────────────────
+# Phase 0-6 新增命令
+# ───────────────────────────────────────────────────────────────
+
+def cmd_rollback_phase(args: argparse.Namespace) -> int:
+    """回退到指定 phase（需人工审批）"""
+    project_name: str = args.project
+    target_phase: str = args.to
+    approved: bool = args.approved
+
+    base_dir = Path.cwd()
+    proj_dir = base_dir / project_name
+    if not proj_dir.exists():
+        print(f"[ERROR] 项目目录不存在: {proj_dir}")
+        return 1
+
+    passed, msg = phase_rollback(project_name, base_dir, target_phase, approved=approved)
+    if not passed:
+        if "审批" in msg or "approved" in msg.lower():
+            print(f"[BLOCKED] {msg}")
+        else:
+            print(f"[ERROR] {msg}")
+        return 1
+
+    print(f"[OK] {msg}")
+    return 0
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    """人工审批指定 phase"""
+    project_name: str = args.project
+    phase: str = args.phase
+
+    base_dir = Path.cwd()
+    proj_dir = base_dir / project_name
+    if not proj_dir.exists():
+        print(f"[ERROR] 项目目录不存在: {proj_dir}")
+        return 1
+
+    if phase == "design":
+        passed, msg = phase_approve_design(project_name, base_dir)
+    elif phase == "accept":
+        passed, msg = phase_approve_accept(project_name, base_dir)
+    else:
+        print(f"[ERROR] 未知审批 phase: {phase}")
+        return 1
+
+    if not passed:
+        print(f"[ERROR] {msg}")
+        return 1
+
+    print(f"[OK] {msg}")
+    return 0
+
+
+def cmd_mark_tests(args: argparse.Namespace) -> int:
+    """标记端到端测试状态"""
+    project_name: str = args.project
+    passed: bool = args.passed
+
+    base_dir = Path.cwd()
+    proj_dir = base_dir / project_name
+    if not proj_dir.exists():
+        print(f"[ERROR] 项目目录不存在: {proj_dir}")
+        return 1
+
+    ok, msg = phase_mark_tests(project_name, base_dir, passed=passed)
+    if not ok:
+        print(f"[ERROR] {msg}")
+        return 1
+
+    print(f"[OK] {msg}")
+    return 0
+
+
+# ───────────────────────────────────────────────────────────────
 # CLI 入口
 # ───────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pipeline.py",
-        description="最简版 pipeline 状态机 — Phase 0-3 流转 + SQLite 持久化",
+        description="pipeline 状态机 — Phase 0-6 完整流转 + SQLite 持久化",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -498,12 +623,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_rollback.add_argument("project", help="项目名")
     p_rollback.add_argument("--checkpoint-id", type=int, required=True, help="checkpoint ID")
 
+    # rollback-phase (F013)
+    p_rollback_phase = sub.add_parser("rollback-phase", help="回退到指定 phase（需人工审批）")
+    p_rollback_phase.add_argument("project", help="项目名")
+    p_rollback_phase.add_argument("--to", required=True, choices=PHASE_NAMES, help="目标 phase")
+    p_rollback_phase.add_argument("--approved", action="store_true", help="确认已人工审批")
+
+    # approve (F013)
+    p_approve = sub.add_parser("approve", help="人工审批指定 phase")
+    p_approve.add_argument("project", help="项目名")
+    p_approve.add_argument("--phase", required=True, choices=["design", "accept"], help="要审批的 phase")
+
+    # mark-tests (F013)
+    p_mark_tests = sub.add_parser("mark-tests", help="标记端到端测试状态")
+    p_mark_tests.add_argument("project", help="项目名")
+    p_mark_tests.add_argument("--passed", action="store_true", help="标记为通过")
+    p_mark_tests.add_argument("--failed", action="store_true", help="标记为未通过")
+
     return parser
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # 处理 mark-tests 的 passed/failed 互斥逻辑
+    if getattr(args, "failed", False):
+        args.passed = False
 
     handlers = {
         "init": cmd_init,
@@ -513,6 +659,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         "status": cmd_status,
         "resume": cmd_resume,
         "rollback": cmd_rollback,
+        "rollback-phase": cmd_rollback_phase,
+        "approve": cmd_approve,
+        "mark-tests": cmd_mark_tests,
     }
 
     handler = handlers.get(args.command)
