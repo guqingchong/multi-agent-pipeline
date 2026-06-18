@@ -13,6 +13,7 @@ $Green = "Green"
 $Red = "Red"
 $Yellow = "Yellow"
 $Cyan = "Cyan"
+$Gray = "Gray"
 
 $PassCount = 0
 $FailCount = 0
