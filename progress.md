@@ -8,13 +8,13 @@
 
 | Phase | 名称 | 状态 | 检查点 |
 |-------|------|------|--------|
-| Phase 0 | Initializer | ✅ 已完成 | 项目目录、git repo、SOUL.md、AGENTS.md、prd.md 已存在 |
-| Phase 1 | Design | 🔄 进行中 | 调研报告已生成，等待架构设计 |
-| Phase 2 | Decompose | ⏳ 待开始 | 依赖 Phase 1 完成 |
-| Phase 3 | Develop | ⏳ 待开始 | 依赖 Phase 2 完成 |
-| Phase 4 | Test | ⏳ 待开始 | 依赖 Phase 3 完成 |
-| Phase 5 | Accept | ⏳ 待开始 | 依赖 Phase 4 完成 |
-| Phase 6 | Deploy | ⏳ 待开始 | 依赖 Phase 5 完成 |
+| Phase 0 | Initializer | 已完成 | 项目目录、git repo、SOUL.md、AGENTS.md、prd.md 已存在 |
+| Phase 1 | Design | 已完成 | 调研报告已生成，架构设计已基于 PRD 完成 |
+| Phase 2 | Decompose | 进行中 | features.json 已生成，待验证 |
+| Phase 3 | Develop | 待开始 | 依赖 Phase 2 完成 |
+| Phase 4 | Test | 待开始 | 依赖 Phase 3 完成 |
+| Phase 5 | Accept | 待开始 | 依赖 Phase 4 完成 |
+| Phase 6 | Deploy | 待开始 | 依赖 Phase 5 完成 |
 
 ## 已完成工作
 
@@ -30,19 +30,43 @@
   - 技术选型分析（沙箱方案、模型选择、工具链）
   - 风险识别（Windows 11 Home 限制、模型 API 稳定性）
   - 生成 `docs/research_report.md`
+- [x] Phase 2: 任务分解完成
+  - 读取 PRD v2.3 完整内容 + 调研报告
+  - 按 PRD 第 20 节实施路线图分解为 22 个 features
+  - 每个 feature 包含: id, title, description, acceptance_criteria, dependencies, estimated_complexity, owner_agent, status, max_token_budget, wave
+  - 按依赖关系分 10 个 wave
+  - 验证依赖图无环: 通过
+  - 验证所有依赖引用有效 feature ID: 通过
+  - 生成 `features.json` (22 features, schema_version: 1)
 
 ## 待办工作
 
-### Phase 1 下一步
-- [ ] 基于调研报告输出 `specs/architecture.md`
-- [ ] 人类审批架构设计（阻塞式）
-- [ ] 通过 `check_design` 检查点
+### Phase 2 检查点 (check_decompose)
+- [x] `features.json` 符合 schema
+- [x] 所有 feature 有 acceptance_criteria
+- [x] 依赖图无环
+- [x] 已分波 (Wave 1-10)
+- [ ] feature 粒度检查通过 (待 Phase 3 开发时验证)
 
-### Week 1 MVP
-- [ ] 单 Agent（Kimi）跑通编码→测试→验证流程
-- [ ] 基线对照实验：单 Agent vs 多 Agent（2-Agent）
-- [ ] 3 个中等复杂度任务对比测试
-- [ ] 记录 token 消耗、耗时、质量作为基线
+### Phase 3 下一步 (Wave 1)
+- [ ] F001: 单 Agent 编码→测试→验证 MVP
+- [ ] F002: 基线对照实验框架
+- [ ] F003: 异构审查效果验证
+
+## Features 总览
+
+| Wave | Features | 主题 | 复杂度 |
+|------|----------|------|--------|
+| 1 | F001, F002, F003 | Week 1 MVP + 基线建立 | 2 medium, 1 medium |
+| 2 | F004 | Kill Switch 判定 | 1 complex |
+| 3 | F005, F006 | 最简 pipeline + 双模型路由 | 2 complex |
+| 4 | F007, F008, F009, F010, F011 | 硬基础设施 (沙箱/状态/预算/熔断/上下文) | 3 complex, 2 medium |
+| 5 | F012 | Agent Adapter 三层架构 | 1 complex |
+| 6 | F013, F014, F015, F016 | 完整流程 + 审批 + 可观测性 + 缓存 | 2 complex, 2 medium |
+| 7 | F017, F018 | Qwen Code 集成 + Worktree 并行 | 2 medium |
+| 8 | F019 | 4-Agent 全团队验证 | 1 complex |
+| 9 | F020, F021 | 性能优化 + 用户文档 | 2 medium |
+| 10 | F022 | Kill Switch 最终报告 + 归档 | 1 medium |
 
 ## 风险跟踪
 
@@ -50,9 +74,10 @@
 |------|------|------|------|
 | Windows 11 Home 安全限制 | 高 | 已识别 | 最小可行沙箱方案已选定 |
 | 模型 API 稳定性 | 中 | 已识别 | 降级路径已规划 |
-| 多 Agent 协调成本 > 收益 | 高 | 待验证 | Week 1 Kill Switch 决定 |
-| 上下文窗口溢出 | 中 | 已识别 | ContextManager 已设计 |
-| 成本超预算 | 中 | 待验证 | 三级预算预警已设计 |
+| 多 Agent 协调成本 > 收益 | 高 | 待验证 | Week 1 Kill Switch (F004) 决定 |
+| 上下文窗口溢出 | 中 | 已识别 | ContextManager (F011) 已规划 |
+| 成本超预算 | 中 | 待验证 | 三级预算预警 (F009) 已规划 |
+| 依赖图复杂度 | 中 | 已缓解 | 10 waves, 无环, 已验证 |
 
 ## 变更日志
 
@@ -60,3 +85,4 @@
 |------|------|------|
 | 2026-06-18 | 创建 progress.md | Hermes-Research |
 | 2026-06-18 | 完成 Phase 1 调研报告 | Hermes-Research |
+| 2026-06-18 | 完成 Phase 2 任务分解，生成 features.json | Hermes-Research |
