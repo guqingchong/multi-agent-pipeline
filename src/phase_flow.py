@@ -18,12 +18,23 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from phase_checks import (
-    CHECK_REGISTRY,
-    run_check,
-    get_all_phase_names,
-)
-from state_store import StateStore
+try:
+    from phase_checks import (
+        CHECK_REGISTRY,
+        run_check,
+        get_all_phase_names,
+    )
+except ModuleNotFoundError:
+    from src.phase_checks import (
+        CHECK_REGISTRY,
+        run_check,
+        get_all_phase_names,
+    )
+
+try:
+    from state_store import StateStore
+except ModuleNotFoundError:
+    from src.state_store import StateStore
 
 
 # ───────────────────────────────────────────────────────────────

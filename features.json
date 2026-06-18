@@ -949,6 +949,156 @@
           "payload": "人工审查最终交付报告，确认所有 Phase 通过"
         }
       ]
+    },
+    {
+      "id": "F023",
+      "title": "入口层自动加载",
+      "description": "每次对话自动加载项目状态、显示驾驶舱、识别用户意图",
+      "owner": "Claude Code",
+      "wave": 9,
+      "dependencies": [
+        "F005",
+        "F008"
+      ],
+      "estimated_complexity": "medium",
+      "max_token_budget": 50000,
+      "acceptance_criteria": [
+        {
+          "id": "AC1",
+          "type": "command",
+          "description": "自动加载项目状态",
+          "payload": "python -c 'from entry import auto_load; auto_load()'"
+        },
+        {
+          "id": "AC2",
+          "type": "command",
+          "description": "显示驾驶舱",
+          "payload": "python -c 'from entry import show_dashboard; show_dashboard()'"
+        },
+        {
+          "id": "AC3",
+          "type": "test",
+          "description": "入口层单元测试通过",
+          "payload": "pytest tests/test_entry.py -v"
+        }
+      ],
+      "status": "passed",
+      "phase_completed": {
+        "develop": "2026-06-19",
+        "review": "2026-06-19",
+        "test": "2026-06-19"
+      },
+      "review_result": {
+        "p0": 0,
+        "p1": 0,
+        "p2": 0,
+        "passed": true
+      },
+      "test_result": {
+        "tests_passed": 1004,
+        "tests_total": 1004,
+        "coverage": 90
+      }
+    },
+    {
+      "id": "F024",
+      "title": "系统级约束层",
+      "description": "系统自动约束任务路由，编码→Claude，审核→CodeWhale，测试→Qwen",
+      "owner": "Claude Code",
+      "wave": 9,
+      "dependencies": [
+        "F023",
+        "F012"
+      ],
+      "estimated_complexity": "medium",
+      "max_token_budget": 50000,
+      "acceptance_criteria": [
+        {
+          "id": "AC1",
+          "type": "command",
+          "description": "约束层自动拦截违规操作",
+          "payload": "python -c 'from system_constraint import SystemConstraint; SystemConstraint.route_task(\"coding\", spec)'"
+        },
+        {
+          "id": "AC2",
+          "type": "test",
+          "description": "约束层单元测试通过",
+          "payload": "pytest tests/test_system_constraint.py -v"
+        },
+        {
+          "id": "AC3",
+          "type": "assertion",
+          "description": "Hermes尝试编码被自动拦截",
+          "payload": "assert SystemConstraint.hermes_only_orchestration('coding') raises ConstraintViolation"
+        }
+      ],
+      "status": "passed",
+      "phase_completed": {
+        "develop": "2026-06-19",
+        "review": "2026-06-19",
+        "test": "2026-06-19"
+      },
+      "review_result": {
+        "p0": 0,
+        "p1": 0,
+        "p2": 0,
+        "passed": true
+      },
+      "test_result": {
+        "tests_passed": 1004,
+        "tests_total": 1004,
+        "coverage": 90
+      }
+    },
+    {
+      "id": "F025",
+      "title": "建议模式调度层",
+      "description": "生成建议等待用户确认，不自动推进",
+      "owner": "Claude Code",
+      "wave": 9,
+      "dependencies": [
+        "F024",
+        "F013"
+      ],
+      "estimated_complexity": "medium",
+      "max_token_budget": 50000,
+      "acceptance_criteria": [
+        {
+          "id": "AC1",
+          "type": "command",
+          "description": "建议引擎生成建议",
+          "payload": "python -c 'from suggestion_engine import SuggestionEngine; se.suggest_next_phase(state)'"
+        },
+        {
+          "id": "AC2",
+          "type": "test",
+          "description": "建议引擎单元测试通过",
+          "payload": "pytest tests/test_suggestion_engine.py -v"
+        },
+        {
+          "id": "AC3",
+          "type": "assertion",
+          "description": "建议包含advance/blocker类型",
+          "payload": "assert suggestion['type'] in ['advance', 'blocker']"
+        }
+      ],
+      "status": "passed",
+      "phase_completed": {
+        "develop": "2026-06-19",
+        "review": "2026-06-19",
+        "test": "2026-06-19"
+      },
+      "review_result": {
+        "p0": 0,
+        "p1": 0,
+        "p2": 0,
+        "passed": true
+      },
+      "test_result": {
+        "tests_passed": 1004,
+        "tests_total": 1004,
+        "coverage": 90
+      }
     }
   ]
 }

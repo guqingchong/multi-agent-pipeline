@@ -22,28 +22,58 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from state_store import StateStore, CheckpointRecord
-from phase_checks import (
-    CHECK_REGISTRY,
-    check_init,
-    check_design,
-    check_decompose,
-    check_develop,
-    check_test,
-    check_accept,
-    check_deploy,
-    run_check,
-    get_all_phase_names,
-)
-from phase_flow import (
-    PhaseFlow,
-    phase_check,
-    phase_advance,
-    phase_rollback,
-    phase_approve_design,
-    phase_approve_accept,
-    phase_mark_tests,
-)
+try:
+    from state_store import StateStore, CheckpointRecord
+except ModuleNotFoundError:
+    from src.state_store import StateStore, CheckpointRecord
+
+try:
+    from phase_checks import (
+        CHECK_REGISTRY,
+        check_init,
+        check_design,
+        check_decompose,
+        check_develop,
+        check_test,
+        check_accept,
+        check_deploy,
+        run_check,
+        get_all_phase_names,
+    )
+except ModuleNotFoundError:
+    from src.phase_checks import (
+        CHECK_REGISTRY,
+        check_init,
+        check_design,
+        check_decompose,
+        check_develop,
+        check_test,
+        check_accept,
+        check_deploy,
+        run_check,
+        get_all_phase_names,
+    )
+
+try:
+    from phase_flow import (
+        PhaseFlow,
+        phase_check,
+        phase_advance,
+        phase_rollback,
+        phase_approve_design,
+        phase_approve_accept,
+        phase_mark_tests,
+    )
+except ModuleNotFoundError:
+    from src.phase_flow import (
+        PhaseFlow,
+        phase_check,
+        phase_advance,
+        phase_rollback,
+        phase_approve_design,
+        phase_approve_accept,
+        phase_mark_tests,
+    )
 
 
 # ───────────────────────────────────────────────────────────────

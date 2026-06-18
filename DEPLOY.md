@@ -1,237 +1,167 @@
-# DEPLOY.md — 面向小白的部署指南
+# DEPLOY.md — 部署指南
 
-> 本文档面向非技术用户，手把手教你把 multi-agent-pipeline 跑起来。不需要懂代码，跟着步骤做就行。
+> 本文档说明如何在本机部署和运行 multi-agent-pipeline 系统。
 
 ---
 
-## 你需要准备什么
+## 重要前提
 
-### 1. 一台 Windows 电脑
+**本项目当前只在本地开发，没有 GitHub 仓库。**
 
-- Windows 10 或 Windows 11
-- 能正常上网
+**项目路径：** `C:\tmp\multi-agent-pipeline`
 
-### 2. Python（运行环境）
+**如果你已经在这个路径看到项目文件，说明项目已存在，不需要下载。**
 
-**检查是否已安装：**
+---
 
-1. 按 `Win + R`，输入 `cmd`，回车打开命令窗口
-2. 输入以下命令，回车：
+## 环境要求
 
+- Windows 10/11
+- Python 3.10+
+- Git（可选，用于 worktree 功能）
+
+---
+
+## 安装步骤
+
+### 1. 确认 Python 已安装
+
+按 `Win + R`，输入 `cmd`，回车。
+
+输入：
 ```
 python --version
 ```
 
-- 如果显示 `Python 3.10.x` 或更高版本（如 `3.11`、`3.12`、`3.13`），恭喜，Python 已就绪！
-- 如果显示 "找不到命令" 或报错，请先去 https://www.python.org/downloads/ 下载安装 Python 3.10+，安装时勾选 **"Add Python to PATH"**。
+看到 `Python 3.10+` 即可。如果报错，去 https://www.python.org/downloads 下载安装。
 
-### 3. Git（代码管理工具）
+### 2. 安装依赖
 
-**检查是否已安装：**
+在项目文件夹 `C:\tmp\multi-agent-pipeline` 中：
 
-在刚才的命令窗口里输入：
+按住 `Shift + 右键` → `在此处打开 PowerShell 窗口`。
 
-```
-git --version
-```
-
-- 如果显示版本号（如 `git version 2.x.x`），Git 已就绪
-- 如果报错，请去 https://git-scm.com/download/win 下载安装
-
----
-
-## 部署步骤（共 3 步）
-
-### 第 1 步：下载项目代码
-
-**方式 A：用 Git 克隆（推荐，方便后续更新）**
-
-1. 打开命令窗口（`Win + R` → `cmd`）
-2. 输入以下命令，回车：
-
-```
-cd %USERPROFILE%
-git clone https://github.com/your-org/multi-agent-pipeline.git
-cd multi-agent-pipeline
-```
-
-> 注意：如果仓库地址不同，请替换为实际的 Git 地址。
-
-**方式 B：直接下载 ZIP**
-
-1. 在浏览器打开项目页面
-2. 点击绿色按钮 `<> Code` → `Download ZIP`
-3. 下载后解压到桌面或任意文件夹
-4. 记住解压后的文件夹路径（如 `C:\Users\你的用户名\multi-agent-pipeline`）
-
----
-
-### 第 2 步：安装依赖
-
-1. 打开 PowerShell（在文件夹空白处按住 `Shift + 右键` → `在此处打开 PowerShell 窗口`）
-2. 输入以下命令，回车：
-
+输入：
 ```powershell
 powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
-**你会看到什么：**
+等 1-3 分钟，看到"安装完成"即可。
 
-- 脚本开始检查 Python 版本
-- 自动安装需要的 Python 包（如 PyYAML、pytest、rich 等）
-- 安装完成后显示 "[PASS] 依赖安装完成"
-- 如果某一步失败，会显示 "[FAIL]" 和具体原因
-
-**整个过程大约需要 1-3 分钟**，取决于你的网速。
-
----
-
-### 第 3 步：验证环境
-
-安装完成后，运行验证脚本确认一切正常：
+### 3. 验证环境
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File verify-runtime.ps1
 ```
 
-**期望结果：** 所有检查项都显示 `[PASS]`，最后一行显示：
-
-```
-========================================
-验证结果: 全部通过
-========================================
-```
-
-如果有 `[FAIL]` 项，脚本会告诉你具体缺什么，按提示解决后重新运行即可。
+全绿 = 环境就绪。
 
 ---
 
-## 启动应用
-
-环境验证通过后，就可以启动系统了：
+## 启动系统
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File start.ps1
 ```
 
-启动后，脚本会：
-1. 检查环境是否就绪
-2. 显示当前项目状态
-3. 进入交互式菜单，你可以输入命令操作
+启动后进入命令行菜单，可以输入命令操作。
 
-**常用菜单选项：**
-- `status` — 查看当前状态仪表盘
-- `init <项目名>` — 初始化一个新项目
-- `check` — 检查当前 Phase 是否满足推进条件
-- `advance` — 推进到下一个 Phase
-- `help` — 查看所有命令
-- `quit` — 退出
+**注意：** 这不是聊天界面。当前版本的交互方式是通过你正在使用的这个聊天窗口（Hermes Agent）。
 
 ---
 
-## 如果遇到问题
+## 使用方式
 
-### 问题 1：PowerShell 提示 "无法加载脚本，因为在此系统上禁止运行脚本"
+### 方式1：通过聊天窗口（当前方式）
 
-**解决：** 在命令前加上 `powershell -ExecutionPolicy Bypass -File`，例如：
+直接在这个对话中告诉 Hermes 你想做什么任务。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File setup.ps1
+示例：
+```
+我想开发一个爬虫系统，需求是...
 ```
 
-或者永久解决（以管理员身份运行 PowerShell，输入）：
+Hermes 会自动分配任务给 AI 团队，并在关键节点问你确认。
 
-```powershell
-Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+### 方式2：通过命令行（start.ps1）
+
+启动后输入命令：
+
+| 命令 | 作用 |
+|------|------|
+| `init <项目名>` | 创建新项目 |
+| `status` | 查看状态 |
+| `develop` | 启动开发 |
+| `check` | 检查进度 |
+| `advance` | 推进到下一步 |
+| `help` | 查看所有命令 |
+
+---
+
+## 项目文件说明
+
+```
+C:\tmp\multi-agent-pipeline\  ← 项目根目录
+├── src\                        ← 系统代码
+│   ├── pipeline.py             ← 主入口
+│   ├── adapters.py             ← AI 适配器
+│   ├── phase_checks.py         ← Phase 检查
+│   └── ...                     ← 其他模块
+├── tests\                      ← 测试代码
+├── README.md                   ← 使用说明
+├── DEPLOY.md                   ← 本文档
+├── setup.ps1                   ← 安装脚本
+├── start.ps1                   ← 启动脚本
+├── verify-runtime.ps1          ← 验证脚本
+└── features.json               ← 功能规格
 ```
 
 ---
 
-### 问题 2：setup.ps1 安装依赖时卡住或报错
+## 常见问题
 
-**可能原因：**
-- 网络问题导致下载失败
-- pip 版本过旧
+### Q: 项目不在 C:\tmp\multi-agent-pipeline？
 
-**解决步骤：**
+A: 当前版本固定在此路径。如果需要移动，复制整个文件夹到新位置，然后重新运行 setup.ps1。
 
-1. 先更新 pip：
-```powershell
-python -m pip install --upgrade pip
-```
+### Q: 启动后没有聊天界面？
 
-2. 重新运行 setup.ps1
+A: 当前版本没有 Web UI。交互方式是通过你正在使用的这个聊天窗口（Hermes Agent）。
 
-3. 如果还是失败，尝试手动安装核心依赖：
-```powershell
-pip install pyyaml pytest rich
-```
+### Q: 如何开始一个新任务？
 
----
+A: 直接在这个对话中说"我想做 XXX"。
 
-### 问题 3：verify-runtime.ps1 显示某些检查失败
+### Q: 如何查看项目进度？
 
-**常见原因和对策：**
+A: 说"查看状态"或"查看 progress.md"。
 
-| 失败项 | 可能原因 | 解决办法 |
-|--------|---------|---------|
-| Python 版本 | 版本低于 3.10 | 去 python.org 下载安装新版 |
-| 依赖包缺失 | 安装中断 | 重新运行 setup.ps1 |
-| Git 未安装 | 系统没有 Git | 安装 Git for Windows |
-| 模块导入失败 | 路径问题 | 确认在 `multi-agent-pipeline` 根目录运行 |
-| 测试失败 | 环境不完整 | 检查前面的依赖是否全部安装 |
+### Q: 代码在哪里？
+
+A: `C:\tmp\multi-agent-pipeline\src\` 目录下。
 
 ---
 
-### 问题 4：不知道项目文件夹在哪
+## 故障排查
 
-如果你用 Git 克隆，默认在：
-
-```
-C:\Users\你的用户名\multi-agent-pipeline
-```
-
-如果你下载 ZIP 解压，就在你解压的位置。
-
-**快速打开：** 在文件资源管理器地址栏输入 `%USERPROFILE%\multi-agent-pipeline` 回车即可。
-
----
-
-## 日常维护
-
-### 更新代码
-
-如果用 Git 克隆的，可以定期更新：
-
-```powershell
-cd %USERPROFILE%\multi-agent-pipeline
-git pull
-```
-
-### 重新安装依赖
-
-如果依赖出问题，可以删除后重装：
-
-```powershell
-cd %USERPROFILE%\multi-agent-pipeline
-pip uninstall -y pyyaml pytest rich playwright pytest-asyncio pytest-cov
-powershell -ExecutionPolicy Bypass -File setup.ps1
-```
-
-### 查看日志
-
-系统运行日志保存在 `.logs/` 目录下，可以用记事本打开查看。
+| 问题 | 现象 | 解决 |
+|------|------|------|
+| Python 未安装 | `python --version` 报错 | 安装 Python 3.10+ |
+| PowerShell 限制 | 无法运行脚本 | 加 `-ExecutionPolicy Bypass` |
+| 依赖安装失败 | setup.ps1 报错 | 手动运行 `pip install pyyaml pytest rich` |
+| 模块导入失败 | verify-runtime 失败 | 确认在项目根目录运行 |
 
 ---
 
 ## 联系支持
 
-如果按本文档步骤仍无法解决，请提供以下信息寻求帮助：
+如果按本文档步骤仍无法解决，请提供：
 
-1. `verify-runtime.ps1` 的完整输出（复制粘贴）
-2. 你的 Windows 版本（`Win + R` → `winver`）
-3. Python 版本（`python --version` 的输出）
+1. `verify-runtime.ps1` 的完整输出
+2. Windows 版本（`Win + R` → `winver`）
+3. Python 版本（`python --version`）
+4. 具体报错信息
 
 ---
 
-**祝你部署顺利！** 🚀
+**祝你使用顺利！** 🚀
