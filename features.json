@@ -537,7 +537,7 @@
       "id": "F014",
       "title": "人机审批分级系统",
       "description": "实现三级审批：阻塞式（Phase 1/5，30分钟超时）、异步式（依赖安装/git push，2小时超时）、默认放行式（低风险操作，5分钟自动放行）。支持审批上下文自动摘要。",
-      "status": "pending",
+      "status": "passed",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
       "dependencies": [
@@ -561,7 +561,23 @@
           "description": "审批摘要自动生成",
           "payload": "python -c \"from src.approval import generate_summary; s = generate_summary(cost=12.5, risk='medium'); assert len(s) <= 200; print(s)\""
         }
-      ]
+      ],
+      "phase_completed": {
+        "develop": "2026-06-18",
+        "review": "2026-06-18",
+        "test": "2026-06-18"
+      },
+      "review_result": {
+        "p0": 0,
+        "p1": 2,
+        "p2": 3,
+        "passed": true
+      },
+      "test_result": {
+        "tests_passed": 501,
+        "tests_total": 501,
+        "coverage": 93
+      }
     },
     {
       "id": "F015",
