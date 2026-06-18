@@ -127,3 +127,12 @@
   - 审核: CodeWhale (328s), P0=0, P1=2, P2=3
   - 测试: Qwen Code (261s), 501/501 passed
   - 验收: Hermes (目标对齐验证通过)
+
+
+## 2026-06-19 00:28
+- F016: Prompt Cache 机制 → PASSED (返修后)
+  - 编码: Claude Code (子任务1: 401s, 子任务2: 600s+)
+  - 返修审核: CodeWhale (305s), P0=0
+  - 返修测试: Qwen Code (336s), 624/624 passed
+  - 验收: Hermes (目标对齐验证通过)
+  - 修复 P0: SQLite持久化 + traces集成 + 配置读取

@@ -618,7 +618,7 @@
       "id": "F016",
       "title": "Prompt Cache 四层策略",
       "description": "实现 Prompt Cache 四层策略：L1 模型服务端缓存、L2 应用层 SQLite 缓存、L3 向量检索缓存（可选）、L4 本地文件索引缓存。目标命中率 >50%，低于 30% 触发告警。",
-      "status": "pending",
+      "status": "passed",
       "owner_agent": "claude",
       "estimated_complexity": "medium",
       "dependencies": [
@@ -642,7 +642,24 @@
           "description": "缓存命中率监控数据写入 traces 表",
           "payload": "os.path.exists('~/.hermes/pipelines/test_project.db')"
         }
-      ]
+      ],
+      "phase_completed": {
+        "develop": "2026-06-18",
+        "review": "2026-06-19",
+        "test": "2026-06-19"
+      },
+      "review_result": {
+        "p0": 0,
+        "p1": 5,
+        "p2": 8,
+        "passed": true,
+        "note": "返修后 P0-1/P0-2/P0-3 全部修复"
+      },
+      "test_result": {
+        "tests_passed": 624,
+        "tests_total": 624,
+        "coverage": 94
+      }
     },
     {
       "id": "F017",
