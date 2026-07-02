@@ -154,7 +154,7 @@ C:\path\to\multi-agent-pipeline\
 │   ├── registry.py               ← 统一注册表
 │   ├── phase_flow.py             ← 阶段状态机
 │   ├── phase_checks.py           ← 阶段检查
-│   ├── queue.py                  ← 统一任务队列
+│   ├── pipeline_queue.py         ← 统一任务队列
 │   ├── adapters.py               ← Agent 适配器
 │   ├── state_store.py            ← SQLite 持久化
 │   └── ...

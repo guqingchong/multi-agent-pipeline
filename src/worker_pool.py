@@ -8,7 +8,7 @@ W2-A02 from v3.0 implementation plan:
     needing restart; stop_all() → sends SHUTDOWN to all.
   - Tracks PIDs and provides graceful + force-termination.
 
-Depends on W2-A01 (agent_daemon.py) and W2-A03 (src/queue.py).
+Depends on W2-A01 (agent_daemon.py) and W2-A03 (src/pipeline_queue.py).
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Set
 # Imports
 # ───────────────────────────────────────────────────────────────
 
-from src.queue import Queue, Task
+from src.pipeline_queue import Queue, Task
 
 try:
     from src.agent_daemon import AgentConfig, TASK_TYPE_SHUTDOWN, create_shutdown_task
@@ -66,7 +66,7 @@ if proj_dir and proj_dir not in sys.path:
     sys.path.insert(0, proj_dir)
 
 from src.agent_daemon import AgentDaemon, AgentConfig, TASK_TYPE_SHUTDOWN
-from src.queue import Queue
+from src.pipeline_queue import Queue
 
 agent_id       = os.environ["PIPELINE_AGENT_ID"]
 cli_path       = os.environ.get("PIPELINE_CLI_PATH", "")

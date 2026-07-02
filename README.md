@@ -118,7 +118,7 @@ python src\pipeline.py status my-project
 │  inspector.py       — 独立审计员，持 PRD/架构/旅程，可 veto     │
 ├─────────────────────────────────────────────────────────────────┤
 │  Dispatch & Queue Layer                                          │
-│  queue.py           — 统一 SQLite 任务队列（sync + async API）    │
+│  pipeline_queue.py  — 统一 SQLite 任务队列（sync + async API）    │
 │  adapters.py        — Agent 适配器与 AgentResult                 │
 │  pipeline_executor.py — 任务派发与等待                           │
 │  event_engine.py    — 基于 queue 的事件链                         │

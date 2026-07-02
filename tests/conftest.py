@@ -13,7 +13,7 @@ def set_mock_mode():
 @pytest.fixture
 def fresh_queue(tmp_path):
     """Provide a temporary Queue backed by an isolated SQLite db."""
-    from queue import Queue
+    from pipeline_queue import Queue
 
     db = tmp_path / "queue.db"
     return Queue(db_path=str(db))

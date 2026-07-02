@@ -1,4 +1,4 @@
-"""Tests for src/queue.py — unified sync/async task queue."""
+"""Tests for src/pipeline_queue.py — unified sync/async task queue."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SRC = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from src.queue import Queue, Task, QueueStats, VALID_STATUSES
+from src.pipeline_queue import Queue, Task, QueueStats, VALID_STATUSES
 
 
 # ───────────────────────────────────────────────────────────────
@@ -343,23 +343,24 @@ def test_default_db_path_is_string() -> None:
 
 
 def test_flat_import_regression() -> None:
-    """Importing src.queue from the project root must resolve our Queue, not stdlib."""
+    """Importing src.pipeline_queue from the project root resolves our Queue,
+    while ``import queue`` resolves the standard library module."""
     root = str(PROJECT_ROOT)
     original_path = sys.path[:]
     original_modules = dict(sys.modules)
     try:
-        # Clear any cached src.queue import so the next import uses the
+        # Clear any cached src.pipeline_queue import so the next import uses the
         # project-root path we inject.
         for mod_name in list(sys.modules):
             if mod_name == "src" or mod_name.startswith("src."):
                 del sys.modules[mod_name]
         sys.path.insert(0, root)
-        import src.queue as queue_mod
+        import src.pipeline_queue as queue_mod
         import queue as stdlib_queue
 
         assert hasattr(queue_mod, "Queue")
         assert queue_mod.Queue is not stdlib_queue.Queue
-        assert queue_mod.Queue.__module__ == "src.queue"
+        assert queue_mod.Queue.__module__ == "src.pipeline_queue"
     finally:
         sys.path[:] = original_path
         sys.modules.clear()

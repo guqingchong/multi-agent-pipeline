@@ -440,7 +440,7 @@ def cmd_check_hermes(task_type: str) -> Dict[str, Any]:
             "message": f"Hermes can execute {task_type}",
         }
     except ConstraintViolation:
-        target = constraint.route_task(task_type, {}).get("target_agent", "unknown")
+        target = constraint.route_task(task_type, {}).get("target_adapter", "unknown")
         return {
             "command": "check-hermes",
             "task_type": task_type,

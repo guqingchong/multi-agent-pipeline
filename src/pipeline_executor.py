@@ -128,19 +128,6 @@ class CLIEndpoint:
     env: Dict[str, str] = field(default_factory=dict)
 
 
-def _resolve_cli_path(name: str) -> str:
-    """解析 CLI 路径（npm global / PATH）"""
-    candidates = [
-        Path(os.path.expanduser(f"~/AppData/Roaming/npm/{name}.cmd")),
-        Path(os.path.expanduser(f"~/AppData/Roaming/npm/{name}.exe")),
-        Path(os.path.expanduser(f"~/AppData/Roaming/npm/{name}")),
-    ]
-    for c in candidates:
-        if c.exists():
-            return str(c)
-    return name  # fallback: rely on PATH
-
-
 def _load_key_from_file(source: str) -> Dict[str, str]:
     """从配置文件加载 API 密钥"""
     try:
@@ -236,7 +223,7 @@ def _build_default_endpoints() -> List[CLIEndpoint]:
 
         endpoints.append(CLIEndpoint(
             adapter_name=name,
-            cli_path=_resolve_cli_path(agent.cli_path),
+            cli_path=agent.cli_path,
             cli_command=agent.cli_command,
             env=env,
         ))

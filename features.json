@@ -28,8 +28,8 @@
     },
     {
       "id": "R2",
-      "title": "统一任务队列 queue.py",
-      "description": "合并 src/message_queue.py 与 src/task_queue.py 为 src/queue.py；提供同步与异步统一 API；接入 pipeline_executor.py 与 event_engine.py；删除旧队列文件；修复 SQL DDL 拼接风险。",
+      "title": "统一任务队列 pipeline_queue.py",
+      "description": "合并 src/message_queue.py 与 src/task_queue.py 为 src/pipeline_queue.py；提供同步与异步统一 API；接入 pipeline_executor.py 与 event_engine.py；删除旧队列文件；修复 SQL DDL 拼接风险。",
       "track": "backend",
       "wave": 1,
       "complexity": "large",
@@ -39,7 +39,7 @@
       "reviewer_agent": "codewhale",
       "tester_agent": "claude-code",
       "acceptance_criteria": [
-        "src/queue.py 存在，提供 Queue 类，含 push_sync/pull_sync/complete_sync/fail_sync/recover_orphaned_sync/stats_sync 及 async 包装",
+        "src/pipeline_queue.py 存在，提供 Queue 类，含 push_sync/pull_sync/complete_sync/fail_sync/recover_orphaned_sync/stats_sync 及 async 包装",
         "DDL 不再拼接 task_type 字符串，task_type 校验由 Registry 负责",
         "pipeline_executor.py 通过 Queue 派发任务，event_engine.py 改为依赖 Queue",
         "物理删除 src/message_queue.py 与 src/task_queue.py",

@@ -1,4 +1,4 @@
-"""src/queue.py — Unified synchronous / asynchronous task queue.
+"""src/pipeline_queue.py — Unified synchronous / asynchronous task queue.
 
 Merges the former ``src/message_queue.py`` (SQLite-backed synchronous queue)
 and ``src/task_queue.py`` (async wrapper) into a single ``Queue`` class.

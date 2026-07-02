@@ -29,7 +29,7 @@ from config import get_config
 from state_store import StateStore
 from phase_flow import PhaseFlow
 from models import ProjectState
-import src.queue as queue_mod
+import src.pipeline_queue as queue_mod
 
 
 app = FastAPI(

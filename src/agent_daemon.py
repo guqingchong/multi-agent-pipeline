@@ -9,7 +9,7 @@ W2-A01 from v3.0 implementation plan:
   - On SHUTDOWN task type → graceful exit
   - No global timeout (only per-subtask timeout)
   - No iteration limit
-  - Uses src/queue.py and src/checkpointer.py (already implemented)
+  - Uses src/pipeline_queue.py and src/checkpointer.py (already implemented)
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional
 # Imports
 # ───────────────────────────────────────────────────────────────
 
-from src.queue import Queue, Task
+from src.pipeline_queue import Queue, Task
 
 try:
     from src.checkpointer import Checkpointer
