@@ -340,3 +340,57 @@ def test_default_db_path_is_string() -> None:
     q = Queue()
     assert isinstance(q.db_path, str)
     assert q.db_path.endswith("message_queue.db")
+
+
+def test_flat_import_regression() -> None:
+    """Importing src.queue from the project root must resolve our Queue, not stdlib."""
+    root = str(PROJECT_ROOT)
+    original_path = sys.path[:]
+    original_modules = dict(sys.modules)
+    try:
+        # Clear any cached src.queue import so the next import uses the
+        # project-root path we inject.
+        for mod_name in list(sys.modules):
+            if mod_name == "src" or mod_name.startswith("src."):
+                del sys.modules[mod_name]
+        sys.path.insert(0, root)
+        import src.queue as queue_mod
+        import queue as stdlib_queue
+
+        assert hasattr(queue_mod, "Queue")
+        assert queue_mod.Queue is not stdlib_queue.Queue
+        assert queue_mod.Queue.__module__ == "src.queue"
+    finally:
+        sys.path[:] = original_path
+        sys.modules.clear()
+        sys.modules.update(original_modules)
+
+
+def test_pending_count_semantics(queue: Queue) -> None:
+    """pending_count_sync(agent_id) totals all tasks; without agent counts queued."""
+    queue.push_sync(Task(target_agent="a1", task_type="code"))
+    queue.push_sync(Task(target_agent="a1", task_type="review"))
+    queue.push_sync(Task(target_agent="a2", task_type="code"))
+
+    claimed = queue.pull_sync("a1")
+    assert claimed is not None
+
+    assert queue.pending_count_sync("a1") == 2
+    assert queue.pending_count_sync() == 2
+
+    queue.complete_sync(claimed.id or 0)
+    # a1 still has one completed + one queued task
+    assert queue.pending_count_sync("a1") == 2
+    assert queue.pending_count_sync() == 2
+
+    queue.purge_completed_sync()
+    assert queue.pending_count_sync("a1") == 1
+    assert queue.pending_count_sync() == 2
+
+
+@pytest.mark.asyncio
+async def test_pending_count_async(queue: Queue) -> None:
+    await queue.enqueue(Task(target_agent="a1", task_type="code"))
+    await queue.enqueue(Task(target_agent="a2", task_type="code"))
+    assert await queue.pending_count("a1") == 1
+    assert await queue.pending_count() == 2

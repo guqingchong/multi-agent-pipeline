@@ -8,7 +8,7 @@ W2-A02 from v3.0 implementation plan:
     needing restart; stop_all() → sends SHUTDOWN to all.
   - Tracks PIDs and provides graceful + force-termination.
 
-Depends on W2-A01 (agent_daemon.py) and W2-A03 (message_queue.py).
+Depends on W2-A01 (agent_daemon.py) and W2-A03 (src/queue.py).
 """
 
 from __future__ import annotations
@@ -24,15 +24,15 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 # ───────────────────────────────────────────────────────────────
-# Dual-import pattern (package / flat)
+# Imports
 # ───────────────────────────────────────────────────────────────
+
+from src.queue import Queue, Task
 
 try:
     from src.agent_daemon import AgentConfig, TASK_TYPE_SHUTDOWN, create_shutdown_task
-    from src.queue import Queue, Task
 except (ModuleNotFoundError, ImportError):
     from agent_daemon import AgentConfig, TASK_TYPE_SHUTDOWN, create_shutdown_task
-    from queue import Queue, Task
 
 # ───────────────────────────────────────────────────────────────
 # Logger
@@ -142,11 +142,11 @@ class WorkerPool:
     """Manages a pool of agent subprocesses.
 
     Provides lifecycle management (start / health-check / stop) for
-    multiple agent-daemon processes that share a single MessageQueue.
+    multiple agent-daemon processes that share a single Queue.
 
     Typical usage::
 
-        mq = MessageQueue("pipeline.db")
+        mq = Queue("pipeline.db")
         pool = WorkerPool(mq)
         pool.start_agent("claude-code", count=3)
         # ... run workloads ...
@@ -196,7 +196,7 @@ class WorkerPool:
         """Spawn *count* agent-daemon subprocesses for *agent_id*.
 
         Each subprocess runs an independent ``AgentDaemon`` instance that
-        pulls tasks from the shared ``MessageQueue``.
+        pulls tasks from the shared ``Queue``.
 
         Args:
             agent_id: Logical agent identifier (must match task target_agent).
@@ -205,7 +205,7 @@ class WorkerPool:
             work_dir: Working directory for the agent subprocess.
             max_subtask_timeout: Per-subtask timeout in seconds (default 600).
             max_retries: Max retry attempts per subtask (default 3).
-            db_path: Path to the SQLite message-queue database.
+            db_path: Path to the SQLite task-queue database.
                 Defaults to ``self.mq.db_path``.
 
         Returns:

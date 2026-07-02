@@ -1,7 +1,7 @@
 """
 src/mcp_transport.py — MCP Transport Layer v1.0
 
-基于 SQLite message_queue 的 MCP (Multi-agent Communication Protocol) 传输层。
+基于 SQLite src/queue 的 MCP (Multi-agent Communication Protocol) 传输层。
 
 架构：
   Hermes (Orchestrator)          Agent (Daemon via CLI)
@@ -29,10 +29,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-try:
-    from src.queue import Queue, Task
-except (ModuleNotFoundError, ImportError):
-    from queue import Queue, Task
+from src.queue import Queue, Task
 
 try:
     from adapters import AgentResult, AdapterStatus
@@ -88,7 +85,7 @@ class MCPTask:
     max_retries: int = 3
 
     def to_message_queue_task(self) -> Task:
-        """转换为 message_queue 的 Task 格式"""
+        """转换为 src/queue 的 Task 格式"""
         return Task(
             id=self.id,
             target_agent=self.agent_id,
@@ -141,7 +138,7 @@ class MCPResult:
 
 
 class MCPTransport:
-    """MCP 传输层 — 基于 message_queue 的 Agent 通信协议
+    """MCP 传输层 — 基于 src/queue 的 Agent 通信协议
 
     Usage:
         transport = MCPTransport("pipeline.db")
@@ -332,7 +329,7 @@ class MCPTransport:
 
     def agent_queue_depth(self, agent_id: str) -> int:
         """Agent 队列中待处理任务数"""
-        # message_queue doesn't expose queue_depth; count pending tasks
+        # src/queue doesn't expose queue_depth; count dispatched tasks
         with self._lock:
             return len([t for t in self._pending.values()
                         if t.agent_id == agent_id and t.status == MCPStatus.DISPATCHED])

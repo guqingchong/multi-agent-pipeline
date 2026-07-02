@@ -2,14 +2,14 @@
 
 W2-A01 from v3.0 implementation plan:
   - AgentConfig dataclass: agent_id, cli_path, work_dir, max_subtask_timeout(600), max_retries(3), checkpoint_dir
-  - AgentDaemon class: __init__(config, mq: MessageQueue), run() main loop
+  - AgentDaemon class: __init__(config, mq: Queue), run() main loop
     (pull task → execute with retry → push result → save checkpoint → loop)
   - _execute_with_retry(task) → try up to max_retries, each with timeout, return TaskResult
   - _execute_subtask(task) → calls external CLI subprocess with actual timeout
   - On SHUTDOWN task type → graceful exit
   - No global timeout (only per-subtask timeout)
   - No iteration limit
-  - Uses ../src/message_queue.py and ../src/checkpointer.py (already implemented)
+  - Uses src/queue.py and src/checkpointer.py (already implemented)
 """
 
 from __future__ import annotations
@@ -25,13 +25,14 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 # ───────────────────────────────────────────────────────────────
-# Dual-import pattern (package / flat)
+# Imports
 # ───────────────────────────────────────────────────────────────
+
+from src.queue import Queue, Task
+
 try:
-    from src.queue import Queue, Task
     from src.checkpointer import Checkpointer
 except (ModuleNotFoundError, ImportError):
-    from queue import Queue, Task
     from checkpointer import Checkpointer
 
 # ───────────────────────────────────────────────────────────────
@@ -109,10 +110,10 @@ class TaskResult:
 
 
 class AgentDaemon:
-    """Long-running agent daemon that pulls tasks from a MessageQueue and executes them.
+    """Long-running agent daemon that pulls tasks from a Queue and executes them.
 
     The daemon runs a continuous loop:
-      1. Pull next task for its agent_id from the message queue.
+      1. Pull next task for its agent_id from the queue.
       2. Execute the task with retry logic (up to max_retries).
       3. Push the result back to the queue (complete or fail).
       4. Save a checkpoint for the subtask.
@@ -124,7 +125,7 @@ class AgentDaemon:
     Usage::
 
         config = AgentConfig(agent_id="claude-code", cli_path="/usr/bin/claude")
-        mq = MessageQueue("pipeline.db")
+        mq = Queue("pipeline.db")
         cp = Checkpointer(db_path="pipeline.db")
         daemon = AgentDaemon(config, mq, checkpointer=cp)
         daemon.run()
@@ -442,7 +443,7 @@ class AgentDaemon:
     # ── _report_result ─────────────────────────────────────────
 
     def _report_result(self, task: Task, result: TaskResult) -> None:
-        """Report the execution result back to the message queue.
+        """Report the execution result back to the queue.
 
         On success the task is marked complete.  On failure it is
         marked failed (which triggers the queue's auto-retry logic).

@@ -205,6 +205,11 @@ class Queue:
             finally:
                 conn.close()
 
+    def _check_closed(self) -> None:
+        """Raise RuntimeError if the Queue has been closed."""
+        if self._closed:
+            raise RuntimeError("Queue is closed")
+
     @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -274,6 +279,7 @@ class Queue:
             ValueError: If ``task_type`` is not registered or ``priority``
                         is outside ``0/1/2``.
         """
+        self._check_closed()
         self._ensure_tables()
 
         valid_task_types = REGISTRY.list_task_types()
@@ -329,6 +335,7 @@ class Queue:
         Returns:
             Task if one was claimed, None otherwise.
         """
+        self._check_closed()
         self._ensure_tables()
 
         now = self._now()
@@ -377,6 +384,7 @@ class Queue:
         Returns:
             True if the task existed and was in ``running`` status.
         """
+        self._check_closed()
         self._ensure_tables()
 
         now = self._now()
@@ -417,6 +425,7 @@ class Queue:
         Returns:
             True if the task existed and was in ``running`` status.
         """
+        self._check_closed()
         self._ensure_tables()
 
         with self._lock:
@@ -472,9 +481,13 @@ class Queue:
     def recover_orphaned_sync(self) -> int:
         """Reset tasks stuck in ``running`` status back to ``queued``.
 
+        After resetting, each recovered task has its ``queued`` lifecycle
+        callbacks fired.
+
         Returns:
             Number of tasks recovered.
         """
+        self._check_closed()
         self._ensure_tables()
 
         with self._lock:
@@ -487,10 +500,18 @@ class Queue:
                         started_at = NULL,
                         error_message = COALESCE(error_message, 'Orphaned after restart')
                     WHERE status = 'running'
+                    RETURNING id
                     """
                 )
+                recovered_ids = [row["id"] for row in cur.fetchall()]
                 conn.commit()
-                return cur.rowcount
+
+                for task_id in recovered_ids:
+                    task = self.get_task_sync(task_id)
+                    if task is not None:
+                        self._fire_callbacks(task)
+
+                return len(recovered_ids)
             except (sqlite3.Error, OSError):
                 conn.rollback()
                 raise
@@ -504,6 +525,7 @@ class Queue:
             A ``QueueStats`` dataclass with counts per status,
             task-type, and target-agent.
         """
+        self._check_closed()
         self._ensure_tables()
 
         with self._lock:
@@ -548,6 +570,7 @@ class Queue:
 
     def get_task_sync(self, task_id: int) -> Optional[Task]:
         """Retrieve a task by id (any status)."""
+        self._check_closed()
         self._ensure_tables()
 
         with self._lock:
@@ -569,6 +592,7 @@ class Queue:
         limit: int = 100,
     ) -> List[Task]:
         """List tasks, optionally filtered by agent and/or status."""
+        self._check_closed()
         self._ensure_tables()
 
         conditions = []
@@ -598,6 +622,7 @@ class Queue:
 
     def requeue_sync(self, task_id: int) -> bool:
         """Manually re-queue a dead-letter or failed task (resets retry_count)."""
+        self._check_closed()
         self._ensure_tables()
 
         with self._lock:
@@ -627,6 +652,7 @@ class Queue:
 
     def purge_completed_sync(self, agent_id: Optional[str] = None) -> int:
         """Delete all completed tasks, optionally filtered by agent."""
+        self._check_closed()
         self._ensure_tables()
 
         with self._lock:
@@ -757,7 +783,13 @@ class Queue:
         return await self._run_sync(self.stats_sync)
 
     def pending_count_sync(self, agent_id: Optional[str] = None) -> int:
-        """Return the number of queued tasks, optionally filtered by agent."""
+        """Return task counts.
+
+        If *agent_id* is provided, return the total number of tasks for that
+        agent across all statuses.  If *agent_id* is ``None``, return the
+        global count of ``queued`` tasks.
+        """
+        self._check_closed()
         self._ensure_tables()
 
         with self._lock:
@@ -765,7 +797,7 @@ class Queue:
             try:
                 if agent_id is not None:
                     row = conn.execute(
-                        "SELECT COUNT(*) as cnt FROM task_queue WHERE status = 'queued' AND target_agent = ?",
+                        "SELECT COUNT(*) as cnt FROM task_queue WHERE target_agent = ?",
                         (agent_id,),
                     ).fetchone()
                 else:
@@ -777,7 +809,10 @@ class Queue:
                 conn.close()
 
     async def pending_count(self, agent_id: Optional[str] = None) -> int:
-        """Return the number of queued tasks asynchronously."""
+        """Return task counts asynchronously.
+
+        See ``pending_count_sync`` for semantics.
+        """
         return await self._run_sync(self.pending_count_sync, agent_id)
 
     async def agent_has_work(self, agent_id: str) -> bool:
