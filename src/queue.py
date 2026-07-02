@@ -32,9 +32,11 @@ from typing import Any, Callable, Dict, List, Optional
 try:
     from config import PipelineConfig
     from registry import REGISTRY
+    from observability import trace
 except (ModuleNotFoundError, ImportError):
     from src.config import PipelineConfig
     from src.registry import REGISTRY
+    from src.observability import trace
 
 # ───────────────────────────────────────────────────────────────
 # Constants
@@ -316,6 +318,17 @@ class Queue:
                 task.id = task_id
                 task.created_at = now
                 task.status = "queued"
+                trace(
+                    "queue.push_sync",
+                    project=task.context.get("project", ""),
+                    details={
+                        "task_id": task_id,
+                        "target_agent": task.target_agent,
+                        "task_type": task.task_type,
+                        "feature_id": task.feature_id,
+                        "priority": task.priority,
+                    },
+                )
                 self._fire_callbacks(task)
                 return task_id
             finally:

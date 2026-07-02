@@ -101,6 +101,12 @@ try:
 except (ModuleNotFoundError, ImportError):
     from src.registry import REGISTRY
 
+# Observability
+try:
+    from observability import trace
+except (ModuleNotFoundError, ImportError):
+    from src.observability import trace
+
 
 __all__ = [
     "PipelineExecutor",
@@ -388,6 +394,11 @@ class PipelineExecutor:
 
         如果 daemon 未运行，直接同步执行 CLI（绕过 transport）。
         """
+        trace(
+            "executor.dispatch_and_wait",
+            project=payload.get("project", "") if payload else "",
+            details={"adapter": adapter_name, "task_type": task_type},
+        )
         # 1. 路由验证
         self.constraint.route_task(task_type, payload or {})
 

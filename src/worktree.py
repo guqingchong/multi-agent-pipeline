@@ -82,6 +82,8 @@ def _run_git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedP
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=check,
     )
 

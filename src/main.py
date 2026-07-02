@@ -18,8 +18,11 @@ import uvicorn
 
 # Ensure src/ is importable when running uvicorn from project root
 SRC_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SRC_DIR.parent
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from registry import REGISTRY
 from config import get_config

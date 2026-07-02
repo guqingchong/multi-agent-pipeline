@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import statistics
 from dataclasses import dataclass, field
@@ -23,7 +24,28 @@ try:
 except (ModuleNotFoundError, ImportError):
     from src.config import get_config
 
-from src.state_store import StateStore, TraceRecord, AuditLogRecord, CheckpointRecord
+try:
+    from state_store import StateStore, TraceRecord, AuditLogRecord, CheckpointRecord
+except (ModuleNotFoundError, ImportError):
+    from src.state_store import StateStore, TraceRecord, AuditLogRecord, CheckpointRecord
+
+
+# ───────────────────────────────────────────────────────────────
+# Structured JSON trace logger
+# ───────────────────────────────────────────────────────────────
+
+_pipeline_logger = logging.getLogger("pipeline")
+
+
+def trace(event: str, project: str, details: Dict[str, Any]) -> None:
+    """Emit a structured JSON trace record for key pipeline events."""
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+        "project": project,
+        "details": details,
+    }
+    _pipeline_logger.info(json.dumps(record, ensure_ascii=False, default=str))
 
 
 # ───────────────────────────────────────────────────────────────

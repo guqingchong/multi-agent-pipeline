@@ -15,6 +15,7 @@ PhaseFlow 类管理 v3.0 12 Phase 流转：
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -49,6 +50,11 @@ except (ModuleNotFoundError, ImportError):
     from src.workflow import get_template
 
 try:
+    from observability import trace
+except (ModuleNotFoundError, ImportError):
+    from src.observability import trace
+
+try:
     from inspector import Inspector, AuditVerdict
 except (ModuleNotFoundError, ImportError):
     from src.inspector import Inspector, AuditVerdict
@@ -57,11 +63,6 @@ try:
     from models import ProjectState, Phase
 except ModuleNotFoundError:
     from src.models import ProjectState, Phase
-
-
-# ───────────────────────────────────────────────────────────────
-# Phase order resolution
-# ───────────────────────────────────────────────────────────────
 
 def get_phase_order(project_type: Optional[str] = None) -> List[str]:
     """Return the ordered phase chain for a project type.
@@ -92,6 +93,19 @@ DB_FILENAME = get_config().db_name
 PHASE_ORDER = get_phase_order()
 
 
+def _get_default_base_dir() -> Path:
+    """Return the default projects base directory.
+
+    Priority:
+      1. MULTI_AGENT_PIPELINE_BASE_DIR environment variable
+      2. Current working directory
+    """
+    env_base = os.environ.get("MULTI_AGENT_PIPELINE_BASE_DIR")
+    if env_base:
+        return Path(env_base)
+    return Path.cwd()
+
+
 # ───────────────────────────────────────────────────────────────
 # PhaseFlow 类
 # ───────────────────────────────────────────────────────────────
@@ -107,13 +121,22 @@ class PhaseFlow:
       5. 持久化到 SQLite（通过 state_store）
     """
 
-    def __init__(self, project_name: str, base_dir: Path) -> None:
+    def __init__(self, project_name: str, base_dir: Optional[Path] = None) -> None:
         self.project_name = project_name
-        self.base_dir = base_dir
-        self.proj_dir = base_dir / project_name
+        self.base_dir = base_dir or _get_default_base_dir()
+        self.proj_dir = self.base_dir / project_name
         self.store = self._get_store()
         self.project_type = self._detect_project_type()
         self.phase_order = get_phase_order(self.project_type)
+
+    def init(self, description: str = "", stack: str = "") -> Tuple[ProjectState, List[str], bool]:
+        """Initialize the project directory and state store."""
+        return init_project(
+            project_name=self.project_name,
+            base_dir=self.base_dir,
+            description=description,
+            stack=stack,
+        )
 
     def _detect_project_type(self) -> str:
         """Infer project workflow type from features.json or config default."""
@@ -215,6 +238,12 @@ class PhaseFlow:
         self._save_state(state)
         self._write_checkpoint(state, f"advance:{phase}->{next_phase}")
 
+        trace(
+            "phase.advance",
+            self.project_name,
+            {"from_phase": phase, "to_phase": next_phase},
+        )
+
         return True, f"从 {phase} 推进到 {next_phase}"
 
     def _store_audit_report(self, report) -> None:
@@ -240,8 +269,8 @@ class PhaseFlow:
 
         if not approved:
             return False, (
-                f"Rollback to {target_phase} requires manual approval. "
-                "Use --approved to confirm."
+                f"回退到 {target_phase} 需要人工审批，"
+                "请使用 --approved 参数确认。"
             )
 
         # 更新状态
@@ -261,7 +290,7 @@ class PhaseFlow:
         state.setdefault("phase", self.current_phase())
         self._save_state(state)
         self._write_checkpoint(state, "approve:design")
-        return True, "design approved"
+        return True, "design 已审批通过"
 
     def approve_accept(self) -> Tuple[bool, str]:
         """审批 accept phase"""
@@ -271,7 +300,7 @@ class PhaseFlow:
         state.setdefault("phase", self.current_phase())
         self._save_state(state)
         self._write_checkpoint(state, "approve:accept")
-        return True, "accept approved"
+        return True, "accept 已审批通过"
 
     def mark_tests(self, passed: bool) -> Tuple[bool, str]:
         """标记端到端测试状态"""
@@ -281,7 +310,7 @@ class PhaseFlow:
         state.setdefault("phase", self.current_phase())
         self._save_state(state)
         self._write_checkpoint(state, f"mark_tests:{passed}")
-        return True, f"tests_passed set to {passed}"
+        return True, f"tests_passed 标记为 {passed}"
 
 
 # ───────────────────────────────────────────────────────────────
