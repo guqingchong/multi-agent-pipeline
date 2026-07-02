@@ -32,6 +32,8 @@ from phase_checks import (
     check_deploy,
     run_check,
     get_all_phase_names,
+    load_thresholds,
+    _check_threshold,
 )
 
 
@@ -78,7 +80,10 @@ def init_project(tmp_cwd: Path) -> tuple[str, Path]:
     (proj_dir / "AGENTS.md").write_text("# AGENTS\n", encoding="utf-8")
     (proj_dir / "progress.md").write_text("# progress\n", encoding="utf-8")
     (proj_dir / "features.json").write_text(
-        json.dumps({"project": project_name, "features": []}, ensure_ascii=False),
+        json.dumps(
+            {"project": project_name, "description": "This is a test project description", "features": []},
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
 
@@ -100,9 +105,9 @@ def design_project(init_project: tuple[str, Path]) -> tuple[str, Path]:
     project_name, base_dir = init_project
     proj_dir = base_dir / project_name
 
-    # 创建 specs/architecture.md
-    (proj_dir / "specs").mkdir(exist_ok=True)
-    (proj_dir / "specs" / "architecture.md").write_text(
+    # 创建 docs/design.md
+    (proj_dir / "docs").mkdir(exist_ok=True)
+    (proj_dir / "docs" / "design.md").write_text(
         "# 架构\n\n## 模块划分\n模块A、模块B\n\n## 接口定义\nAPI /v1/users\n\n## 数据流\n数据从A流向B\n",
         encoding="utf-8",
     )
@@ -272,6 +277,7 @@ def accept_project(test_project: tuple[str, Path]) -> tuple[str, Path]:
                 "owner_agent": "agent1",
                 "status": "passed",
                 "wave": 1,
+                "verify_state": "verified",
             },
         ],
     }
@@ -384,6 +390,20 @@ def test_get_all_phase_names() -> None:
     assert "evaluate" in names
 
 
+def test_load_thresholds_structure() -> None:
+    thresholds = load_thresholds()
+    assert "checks" in thresholds
+    assert "budget" in thresholds
+    assert thresholds["checks"]["develop"]["min_source_files"] == 1
+    assert thresholds["checks"]["test"]["required_pass_rate"] == 0.9
+    assert thresholds["checks"]["accept"]["require_verified"] is True
+
+
+def test_check_threshold_default() -> None:
+    assert _check_threshold("develop.min_source_files", 99) == 1
+    assert _check_threshold("missing.key", "default") == "default"
+
+
 def test_run_check_unknown_phase(tmp_cwd: Path) -> None:
     result = run_check("unknown", "proj", tmp_cwd)
     assert result["passed"] is False
@@ -452,18 +472,18 @@ def test_check_design_pass(design_project: tuple[str, Path]) -> None:
     assert result["details"]["has_dataflow"] is True
 
 
-def test_check_design_fail_missing_architecture(init_project: tuple[str, Path]) -> None:
+def test_check_design_fail_missing_design(init_project: tuple[str, Path]) -> None:
     project_name, base_dir = init_project
     result = check_design(project_name, base_dir)
     assert result["passed"] is False
-    assert "architecture.md" in result["reason"]
+    assert "docs/design.md" in result["reason"]
 
 
 def test_check_design_fail_not_approved(init_project: tuple[str, Path]) -> None:
     project_name, base_dir = init_project
     proj_dir = base_dir / project_name
-    (proj_dir / "specs").mkdir(exist_ok=True)
-    (proj_dir / "specs" / "architecture.md").write_text(
+    (proj_dir / "docs").mkdir(exist_ok=True)
+    (proj_dir / "docs" / "design.md").write_text(
         "# 架构\n\n## 模块划分\nA\n\n## 接口定义\nAPI\n\n## 数据流\nflow\n",
         encoding="utf-8",
     )
@@ -566,7 +586,7 @@ def test_check_develop_fail_no_code(decompose_project: tuple[str, Path]) -> None
     project_name, base_dir = decompose_project
     result = check_develop(project_name, base_dir)
     assert result["passed"] is False
-    assert "源代码文件" in result["reason"] or "没有 .py 代码文件" in result["reason"] or "src/" in result["reason"]
+    assert "源代码文件" in result["reason"] or "src/" in result["reason"]
 
 
 # ───────────────────────────────────────────────────────────────
@@ -585,7 +605,7 @@ def test_check_test_fail_no_tests(develop_project: tuple[str, Path]) -> None:
     project_name, base_dir = develop_project
     result = check_test(project_name, base_dir)
     assert result["passed"] is False
-    assert "没有测试文件" in result["reason"] or "tests_passed" in result["reason"]
+    assert "测试文件" in result["reason"] or "tests_passed" in result["reason"]
 
 
 # ───────────────────────────────────────────────────────────────
@@ -609,12 +629,14 @@ def test_check_accept_fail_not_approved(test_project: tuple[str, Path]) -> None:
 
 
 def test_check_accept_v2_unverified_fails(accept_project: tuple[str, Path]) -> None:
-    """schema_version>=2 的 feature 无 verified 时 check_accept 失败"""
+    """当 require_verified=true 时 feature 无 verified 状态 check_accept 失败"""
     project_name, base_dir = accept_project
     proj_dir = base_dir / project_name
     features = json.loads((proj_dir / "features.json").read_text(encoding="utf-8"))
     features["schema_version"] = 2
-    # 不设置 verify_state，默认为 pending
+    # 移除 verify_state，使其默认 pending
+    if "verify_state" in features["features"][0]:
+        del features["features"][0]["verify_state"]
     (proj_dir / "features.json").write_text(
         json.dumps(features, ensure_ascii=False), encoding="utf-8"
     )
@@ -645,19 +667,29 @@ def test_check_accept_v2_verified_passes(accept_project: tuple[str, Path]) -> No
     assert result["details"]["verify_record_ok"] is True
 
 
-def test_check_accept_v1_passed_compatibility(accept_project: tuple[str, Path]) -> None:
-    """schema_version<2 的旧数据不校验 verify_state"""
+def test_check_accept_require_verified_false_skips_verify_state(accept_project: tuple[str, Path]) -> None:
+    """当 thresholds.require_verified=false 时不校验 verify_state。"""
+    import phase_checks
     project_name, base_dir = accept_project
     proj_dir = base_dir / project_name
     features = json.loads((proj_dir / "features.json").read_text(encoding="utf-8"))
-    features["schema_version"] = 1
     if "verify_state" in features["features"][0]:
         del features["features"][0]["verify_state"]
     (proj_dir / "features.json").write_text(
         json.dumps(features, ensure_ascii=False), encoding="utf-8"
     )
-    result = check_accept(project_name, base_dir)
-    assert result["passed"] is True
+
+    # Temporarily disable require_verified
+    original_thresholds = phase_checks._THRESHOLDS
+    try:
+        phase_checks._THRESHOLDS = {
+            "checks": {"accept": {"require_verified": False}}
+        }
+        result = check_accept(project_name, base_dir)
+        assert result["passed"] is True
+        assert result["details"]["require_verified"] is False
+    finally:
+        phase_checks._THRESHOLDS = original_thresholds
 
 
 def test_check_accept_verify_record_optional_invalid(

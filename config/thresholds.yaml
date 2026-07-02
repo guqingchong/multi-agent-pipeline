@@ -1,0 +1,23 @@
+# config/thresholds.yaml — Phase check thresholds
+#
+# Consumed by: src/phase_checks.py
+# Edit values here to tune pipeline quality gates without changing code.
+
+checks:
+  init:
+    min_description_length: 10
+  design:
+    required_files: ["docs/design.md"]
+  develop:
+    min_source_files: 1
+  test:
+    min_test_files: 1
+    required_pass_rate: 0.9
+  accept:
+    require_verified: true
+  evaluate:
+    llm_judge_min_score: 0.7
+
+budget:
+  warning_pct: 0.8
+  hard_stop_pct: 0.95

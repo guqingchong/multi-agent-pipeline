@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS approval_records (
 
 CREATE TABLE IF NOT EXISTS dispatch_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT,
     task_id TEXT,
     agent TEXT,
     task_type TEXT,
@@ -135,6 +136,12 @@ CREATE TABLE IF NOT EXISTS dispatch_history (
     error TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
+CREATE INDEX IF NOT EXISTS idx_features_project_id ON features(project_id);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_project_id ON checkpoints(project_id);
+CREATE INDEX IF NOT EXISTS idx_dispatch_history_project_id ON dispatch_history(project_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_project_id ON audit_logs(project_id);
 """
 
 # Backward compatibility: F005 project_state table (single key-value store)
@@ -235,6 +242,7 @@ class AuditLogRecord:
 class DispatchHistoryRecord:
     """dispatch_history table record"""
     id: Optional[int] = None
+    project_id: Optional[str] = None
     task_id: Optional[str] = None
     agent: Optional[str] = None
     task_type: Optional[str] = None
@@ -254,11 +262,11 @@ class StateStore:
     """SQLite state persistence store
 
     Responsibilities:
-      1. Create / maintain all core tables (projects, features, checkpoints, traces, audit_logs, model_health)
+      1. Create / maintain all core tables (projects, features, checkpoints, traces, audit_logs, model_health,
+         approval_records, dispatch_history)
       2. Provide CRUD interfaces
       3. Checkpoint write / restore / rollback
       4. Backward compatible with F005 project_state table
-      5. Schema migration from v1 to v2
     """
 
     def __init__(self, db_path: Path) -> None:
@@ -269,7 +277,6 @@ class StateStore:
         # Ensure parent directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_tables()
-        self._migrate_v1_to_v2()
 
     # ── Internal helpers ──
 
@@ -280,62 +287,18 @@ class StateStore:
 
     def _ensure_tables(self) -> None:
         with self._conn() as conn:
+            # Schema fix: dispatch_history gained a project_id column to support
+            # the required index. Add it to existing tables before creating indexes.
+            cur = conn.execute("PRAGMA table_info(dispatch_history)")
+            rows = cur.fetchall()
+            if rows and "project_id" not in {r["name"] for r in rows}:
+                conn.execute("ALTER TABLE dispatch_history ADD COLUMN project_id TEXT")
             conn.executescript(CORE_TABLES_SQL)
             conn.executescript(LEGACY_TABLE_SQL)
             conn.commit()
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
-
-    def _migrate_v1_to_v2(self) -> None:
-        """Migrate schema from v1 to v2 if needed."""
-        with self._conn() as conn:
-            # Check if features table has the v2 columns
-            cursor = conn.execute("PRAGMA table_info(features)")
-            columns = {row["name"] for row in cursor.fetchall()}
-
-            if "wave" not in columns:
-                conn.execute("ALTER TABLE features ADD COLUMN wave INTEGER DEFAULT 0")
-            if "dependencies_json" not in columns:
-                conn.execute("ALTER TABLE features ADD COLUMN dependencies_json TEXT DEFAULT '[]'")
-            if "acceptance_criteria_json" not in columns:
-                conn.execute("ALTER TABLE features ADD COLUMN acceptance_criteria_json TEXT DEFAULT '[]'")
-            if "github_issue_number" not in columns:
-                conn.execute("ALTER TABLE features ADD COLUMN github_issue_number INTEGER")
-            if "sync_status" not in columns:
-                conn.execute("ALTER TABLE features ADD COLUMN sync_status TEXT DEFAULT 'unsynced'")
-                conn.execute("""
-                    CREATE TRIGGER IF NOT EXISTS features_sync_status_check_insert
-                    BEFORE INSERT ON features
-                    BEGIN
-                        SELECT CASE
-                            WHEN NEW.sync_status NOT IN ('unsynced','syncing','synced','failed')
-                            THEN RAISE(ABORT, 'Invalid sync_status')
-                        END;
-                    END;
-                """)
-                conn.execute("""
-                    CREATE TRIGGER IF NOT EXISTS features_sync_status_check_update
-                    BEFORE UPDATE ON features
-                    BEGIN
-                        SELECT CASE
-                            WHEN NEW.sync_status NOT IN ('unsynced','syncing','synced','failed')
-                            THEN RAISE(ABORT, 'Invalid sync_status')
-                        END;
-                    END;
-                """)
-
-            # Migrate audit_logs table: add structured audit columns
-            cursor = conn.execute("PRAGMA table_info(audit_logs)")
-            audit_columns = {row["name"] for row in cursor.fetchall()}
-            if "phase" not in audit_columns:
-                conn.execute("ALTER TABLE audit_logs ADD COLUMN phase TEXT")
-            if "event" not in audit_columns:
-                conn.execute("ALTER TABLE audit_logs ADD COLUMN event TEXT")
-            if "details_json" not in audit_columns:
-                conn.execute("ALTER TABLE audit_logs ADD COLUMN details_json TEXT DEFAULT '{}'")
-
-            conn.commit()
 
     # ── projects ──
 
@@ -465,24 +428,24 @@ class StateStore:
             conn.commit()
 
     def _row_to_feature(self, row: sqlite3.Row) -> FeatureRecord:
-        """Convert a DB row to FeatureRecord, handling v2 fields."""
-        deps = row["dependencies_json"] if "dependencies_json" in row.keys() else None
-        ac = row["acceptance_criteria_json"] if "acceptance_criteria_json" in row.keys() else None
+        """Convert a DB row to FeatureRecord (v2 schema)."""
+        deps = row["dependencies_json"]
+        ac = row["acceptance_criteria_json"]
         return FeatureRecord(
             id=row["id"],
             project_id=row["project_id"],
             title=row["title"],
             description=row["description"] or "",
             status=row["status"],
-            owner_agent=row["owner_agent"] if "owner_agent" in row.keys() else "",
-            token_cost=row["token_cost"] if "token_cost" in row.keys() else 0,
-            wave=row["wave"] if "wave" in row.keys() else 0,
+            owner_agent=row["owner_agent"] or "",
+            token_cost=row["token_cost"] or 0,
+            wave=row["wave"] or 0,
             dependencies=json.loads(deps) if deps else [],
             acceptance_criteria=json.loads(ac) if ac else [],
-            github_issue_number=row["github_issue_number"] if "github_issue_number" in row.keys() else None,
-            sync_status=row["sync_status"] if "sync_status" in row.keys() else "unsynced",
-            created_at=row["created_at"] if "created_at" in row.keys() else None,
-            updated_at=row["updated_at"] if "updated_at" in row.keys() else None,
+            github_issue_number=row["github_issue_number"],
+            sync_status=row["sync_status"] or "unsynced",
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     # ── checkpoints ──
@@ -728,6 +691,7 @@ class StateStore:
 
     def write_dispatch_history(
         self,
+        project_id: Optional[str] = None,
         task_id: Optional[str] = None,
         agent: Optional[str] = None,
         task_type: Optional[str] = None,
@@ -742,10 +706,11 @@ class StateStore:
             cur = conn.execute(
                 """
                 INSERT INTO dispatch_history
-                (task_id, agent, task_type, success, latency_ms, exec_mode, output, error, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (project_id, task_id, agent, task_type, success, latency_ms, exec_mode, output, error, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    project_id,
                     task_id,
                     agent,
                     task_type,
@@ -782,6 +747,7 @@ class StateStore:
         return [
             DispatchHistoryRecord(
                 id=r["id"],
+                project_id=r["project_id"],
                 task_id=r["task_id"],
                 agent=r["agent"],
                 task_type=r["task_type"],
@@ -985,18 +951,13 @@ class StateStore:
     # ── Schema version control ──
 
     def get_schema_version(self) -> int:
-        """Return current database schema version."""
+        """Return current database schema version (0=uninitialized, 1=v1, 2=v2)."""
         try:
             with self._conn() as conn:
-                row = conn.execute(
-                    "SELECT schema_version FROM projects LIMIT 1"
-                ).fetchone()
-            if row is None:
-                # No project rows yet; infer from features table columns
-                with self._conn() as conn:
-                    cur = conn.execute("PRAGMA table_info(features)")
-                    columns = {r["name"] for r in cur.fetchall()}
-                return 2 if "wave" in columns else 1
-            return row["schema_version"]
+                cur = conn.execute("PRAGMA table_info(features)")
+                columns = {r["name"] for r in cur.fetchall()}
+            if not columns:
+                return 0
+            return 2 if "wave" in columns else 1
         except sqlite3.OperationalError:
             return 0

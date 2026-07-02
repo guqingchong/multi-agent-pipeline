@@ -86,9 +86,9 @@ def design_project(init_project: tuple[str, Path]) -> tuple[str, Path]:
     project_name, base_dir = init_project
     proj_dir = base_dir / project_name
 
-    # 创建 specs/architecture.md
-    (proj_dir / "specs").mkdir(exist_ok=True)
-    (proj_dir / "specs" / "architecture.md").write_text(
+    # 创建 docs/design.md
+    (proj_dir / "docs").mkdir(exist_ok=True)
+    (proj_dir / "docs" / "design.md").write_text(
         "# 架构\n\n## 模块划分\n模块A、模块B\n\n## 接口定义\nAPI /v1/users\n\n## 数据流\n数据从A流向B\n",
         encoding="utf-8",
     )
@@ -259,6 +259,7 @@ def accept_project(test_project: tuple[str, Path]) -> tuple[str, Path]:
                 "owner_agent": "agent1",
                 "status": "passed",
                 "wave": 1,
+                "verify_state": "verified",
             },
         ],
     }

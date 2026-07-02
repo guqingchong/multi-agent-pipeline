@@ -12,10 +12,11 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Generator
+from typing import Generator, Optional
 
 import pytest
 
@@ -597,6 +598,12 @@ def test_checkpoint_written_on_every_action(init_project: str, tmp_cwd: Path) ->
     (tmp_cwd / project_name / "docs").mkdir(parents=True, exist_ok=True)
     (tmp_cwd / project_name / "docs" / "PRD.md").write_text("# PRD\n", encoding="utf-8")
 
+    # Ensure features.json has a long enough description for check_init
+    features_path = tmp_cwd / project_name / "features.json"
+    features_data = json.loads(features_path.read_text(encoding="utf-8"))
+    features_data["description"] = "This is a test project with sufficient description."
+    features_path.write_text(json.dumps(features_data, ensure_ascii=False), encoding="utf-8")
+
     ret = cmd_advance(type("Args", (), {"project": project_name})())
     assert ret == 0
     cps = store.list_checkpoints(project_name)
@@ -634,95 +641,110 @@ def test_resume_restores_full_state(init_project: str, tmp_cwd: Path) -> None:
     assert restored.phase == Phase("test")
     assert restored.check_results.get("code_written") is True
     assert restored.check_results.get("tests_passed") is True
-    """Tests for StateStore v2 schema fields."""
 
-    def test_create_feature_with_v2_fields(self, tmp_cwd: Path) -> None:
-        """FeatureRecord with wave, dependencies, acceptance_criteria, github_issue_number, sync_status."""
-        db_path = tmp_cwd / "test_v2.db"
-        store = StateStore(db_path)
-        store.create_project("p1", "Test", "init")
-        f = FeatureRecord(
-            id="F1",
-            project_id="p1",
-            title="T",
-            description="desc",
-            status="pending",
-            wave=1,
-            dependencies=["F0"],
-            acceptance_criteria=["AC1", "AC2"],
-            github_issue_number=42,
-            sync_status="synced",
+
+# ───────────────────────────────────────────────────────────────
+# 9. StateStore v2 schema fields
+# ───────────────────────────────────────────────────────────────
+
+def test_create_feature_with_v2_fields(tmp_cwd: Path) -> None:
+    """FeatureRecord with wave, dependencies, acceptance_criteria, github_issue_number, sync_status."""
+    db_path = tmp_cwd / "test_v2.db"
+    store = StateStore(db_path)
+    store.create_project("p1", "Test", "init")
+    f = FeatureRecord(
+        id="F1",
+        project_id="p1",
+        title="T",
+        description="desc",
+        status="pending",
+        wave=1,
+        dependencies=["F0"],
+        acceptance_criteria=["AC1", "AC2"],
+        github_issue_number=42,
+        sync_status="synced",
+    )
+    store.create_feature(f)
+    f2 = store.get_feature("F1")
+    assert f2 is not None
+    assert f2.wave == 1
+    assert f2.dependencies == ["F0"]
+    assert f2.acceptance_criteria == ["AC1", "AC2"]
+    assert f2.github_issue_number == 42
+    assert f2.sync_status == "synced"
+
+
+def test_update_feature_sync(tmp_cwd: Path) -> None:
+    """update_feature_sync changes sync_status and updated_at."""
+    db_path = tmp_cwd / "test_sync.db"
+    store = StateStore(db_path)
+    store.create_project("p1", "Test", "init")
+    f = FeatureRecord(
+        id="F1",
+        project_id="p1",
+        title="T",
+        status="pending",
+        sync_status="unsynced",
+    )
+    store.create_feature(f)
+    store.update_feature_sync("F1", "syncing")
+    f2 = store.get_feature("F1")
+    assert f2.sync_status == "syncing"
+    # Invalid sync_status should be rejected by DB CHECK
+    with pytest.raises(sqlite3.IntegrityError):
+        store.update_feature_sync("F1", "invalid_status")
+
+
+def test_schema_migration_via_script(tmp_cwd: Path) -> None:
+    """Legacy v1 DB is migrated by scripts/migrate_v1_to_v2.py."""
+    db_path = tmp_cwd / "test_migrate.db"
+    # Create a v1-style DB manually
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE features (
+            id TEXT PRIMARY KEY,
+            project_id TEXT,
+            title TEXT,
+            description TEXT,
+            status TEXT
         )
-        store.create_feature(f)
-        f2 = store.get_feature("F1")
-        assert f2 is not None
-        assert f2.wave == 1
-        assert f2.dependencies == ["F0"]
-        assert f2.acceptance_criteria == ["AC1", "AC2"]
-        assert f2.github_issue_number == 42
-        assert f2.sync_status == "synced"
+    """)
+    conn.execute("INSERT INTO features VALUES ('F1', 'p1', 'T', 'd', 'pending')")
+    conn.commit()
+    conn.close()
 
-    def test_update_feature_sync(self, tmp_cwd: Path) -> None:
-        """update_feature_sync changes sync_status and updated_at."""
-        db_path = tmp_cwd / "test_sync.db"
-        store = StateStore(db_path)
-        store.create_project("p1", "Test", "init")
-        f = FeatureRecord(
-            id="F1",
-            project_id="p1",
-            title="T",
-            status="pending",
-            sync_status="unsynced",
-        )
-        store.create_feature(f)
-        store.update_feature_sync("F1", "syncing")
-        f2 = store.get_feature("F1")
-        assert f2.sync_status == "syncing"
-        # Invalid sync_status should be rejected by DB CHECK
-        with pytest.raises(sqlite3.IntegrityError):
-            store.update_feature_sync("F1", "invalid_status")
+    script = Path(__file__).parent.parent / "scripts" / "migrate_v1_to_v2.py"
+    result = subprocess.run(
+        ["python", str(script), str(db_path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
-    def test_schema_migration_v1_to_v2(self, tmp_cwd: Path) -> None:
-        """Old DB without v2 columns gets migrated automatically."""
-        db_path = tmp_cwd / "test_migrate.db"
-        # Create a v1-style DB manually
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("""
-            CREATE TABLE features (
-                id TEXT PRIMARY KEY,
-                project_id TEXT,
-                title TEXT,
-                description TEXT,
-                status TEXT
-            )
-        """)
-        conn.execute("INSERT INTO features VALUES ('F1', 'p1', 'T', 'd', 'pending')")
-        conn.commit()
-        conn.close()
+    # Opening with StateStore should now work on the migrated DB
+    store = StateStore(db_path)
+    store.create_project("p1", "Test", "init")
+    f = store.get_feature("F1")
+    assert f is not None
+    assert f.wave == 0  # default
+    assert f.dependencies == []
+    assert f.acceptance_criteria == []
+    assert f.github_issue_number is None
+    assert f.sync_status == "unsynced"
 
-        # Opening with StateStore should trigger migration
-        store = StateStore(db_path)
-        store.create_project("p1", "Test", "init")
-        # After migration, new columns should exist
-        f = store.get_feature("F1")
-        assert f is not None
-        assert f.wave == 0  # default
-        assert f.dependencies == []
-        assert f.acceptance_criteria == []
-        assert f.github_issue_number is None
-        assert f.sync_status == "unsynced"
 
-    def test_feature_record_defaults(self, tmp_cwd: Path) -> None:
-        """FeatureRecord without v2 fields uses defaults."""
-        db_path = tmp_cwd / "test_defaults.db"
-        store = StateStore(db_path)
-        store.create_project("p1", "Test", "init")
-        f = FeatureRecord(id="F1", project_id="p1", title="T")
-        store.create_feature(f)
-        f2 = store.get_feature("F1")
-        assert f2.wave == 0
-        assert f2.dependencies == []
-        assert f2.acceptance_criteria == []
-        assert f2.github_issue_number is None
-        assert f2.sync_status == "unsynced"
+def test_feature_record_defaults(tmp_cwd: Path) -> None:
+    """FeatureRecord without v2 fields uses defaults."""
+    db_path = tmp_cwd / "test_defaults.db"
+    store = StateStore(db_path)
+    store.create_project("p1", "Test", "init")
+    f = FeatureRecord(id="F1", project_id="p1", title="T")
+    store.create_feature(f)
+    f2 = store.get_feature("F1")
+    assert f2.wave == 0
+    assert f2.dependencies == []
+    assert f2.acceptance_criteria == []
+    assert f2.github_issue_number is None
+    assert f2.sync_status == "unsynced"
 

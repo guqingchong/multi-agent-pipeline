@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+import yaml
+
 # 导入REGISTRY
 try:
     from registry import REGISTRY
@@ -24,6 +26,35 @@ try:
     from project_profile import ProjectProfile, get_project_profile
 except (ModuleNotFoundError, ImportError):
     from src.project_profile import ProjectProfile, get_project_profile
+
+
+# ───────────────────────────────────────────────────────────────
+# Threshold loading
+# ───────────────────────────────────────────────────────────────
+
+_THRESHOLDS: Optional[dict] = None
+
+
+def load_thresholds() -> dict:
+    """Load phase-check thresholds from config/thresholds.yaml (cached)."""
+    global _THRESHOLDS
+    if _THRESHOLDS is None:
+        path = Path(__file__).resolve().parent.parent / "config" / "thresholds.yaml"
+        with path.open("r", encoding="utf-8") as f:
+            _THRESHOLDS = yaml.safe_load(f)
+    return _THRESHOLDS
+
+
+def _check_threshold(key_path: str, default: Any) -> Any:
+    """Fetch a single threshold value by dotted path under checks.*"""
+    data = load_thresholds()
+    keys = ("checks", *key_path.split("."))
+    for key in keys:
+        if isinstance(data, dict) and key in data:
+            data = data[key]
+        else:
+            return default
+    return data
 
 
 # ───────────────────────────────────────────────────────────────
@@ -160,6 +191,13 @@ def check_init(project_name: str, base_dir: Path) -> CheckResult:
             errors.append("features.json 缺少 'project' 字段")
         elif features_data.get("project") != project_name:
             errors.append("features.json 中的 project 名称不匹配")
+        else:
+            # Description length gate (only enforced when description is provided)
+            min_desc_len = _check_threshold("init.min_description_length", 10)
+            description = features_data.get("description", "")
+            details["description_length"] = len(description)
+            if description and len(description) < min_desc_len:
+                errors.append(f"项目描述长度不足 {min_desc_len} 字符")
 
     if errors:
         return {"passed": False, "reason": " | ".join(errors), "details": details}
@@ -183,14 +221,20 @@ def check_design(project_name: str, base_dir: Path) -> CheckResult:
     if not proj_dir.exists():
         return {"passed": False, "reason": "项目目录不存在", "details": {"project_dir_exists": False}}
 
-    # 检查 architecture.md
-    arch_path = proj_dir / "specs" / "architecture.md"
-    details["architecture_md_exists"] = arch_path.exists()
-    if not arch_path.exists():
-        errors.append("缺少 specs/architecture.md")
-    else:
-        content = _read_text_file(project_name, base_dir, "specs/architecture.md") or ""
-        details["architecture_md_length"] = len(content)
+    # 检查设计文档（从 thresholds.yaml 读取 required_files）
+    required_files = _check_threshold("design.required_files", ["docs/design.md"])
+    design_doc_path: Optional[Path] = None
+    for rel_path in required_files:
+        file_path = proj_dir / rel_path
+        details[f"{rel_path}_exists"] = file_path.exists()
+        if not file_path.exists():
+            errors.append(f"缺少设计文档: {rel_path}")
+        elif design_doc_path is None:
+            design_doc_path = file_path
+
+    if design_doc_path is not None and design_doc_path.exists():
+        content = design_doc_path.read_text(encoding="utf-8", errors="ignore")
+        details["design_doc_length"] = len(content)
         # 检查是否包含模块划分、接口定义、数据流
         has_modules = "模块" in content or "module" in content.lower() or "划分" in content
         has_interfaces = "接口" in content or "interface" in content.lower() or "API" in content
@@ -199,11 +243,11 @@ def check_design(project_name: str, base_dir: Path) -> CheckResult:
         details["has_interfaces"] = has_interfaces
         details["has_dataflow"] = has_dataflow
         if not has_modules:
-            errors.append("architecture.md 缺少模块划分")
+            errors.append("设计文档缺少模块划分")
         if not has_interfaces:
-            errors.append("architecture.md 缺少接口定义")
+            errors.append("设计文档缺少接口定义")
         if not has_dataflow:
-            errors.append("architecture.md 缺少数据流描述")
+            errors.append("设计文档缺少数据流描述")
 
     # 检查 design_approved 状态（从 state store 读取）
     design_approved = False
@@ -411,11 +455,12 @@ def check_develop(project_name: str, base_dir: Path) -> CheckResult:
 
     # 检查是否有代码文件（使用 ProjectProfile 获取源代码文件）
     source_files = project_profile.get_source_files()
-    has_code = len(source_files) > 0
+    min_source_files = _check_threshold("develop.min_source_files", 1)
+    has_code = len(source_files) >= min_source_files
     details["src_file_count"] = len(source_files)
     details["has_code"] = has_code
     if not has_code:
-        errors.append(f"项目中没有找到源代码文件（支持的扩展名: {project_profile.source_extensions})")
+        errors.append(f"项目中源代码文件不足 {min_source_files} 个")
 
     # 检查 git commit 历史
     git_log_ok = False
@@ -493,9 +538,10 @@ def check_test(project_name: str, base_dir: Path) -> CheckResult:
 
     # 检查是否有测试文件（使用 ProjectProfile 获取测试文件）
     test_files = project_profile.get_test_files()
+    min_test_files = _check_threshold("test.min_test_files", 1)
     details["test_file_count"] = len(test_files)
-    if not test_files:
-        errors.append(f"项目中没有找到测试文件（匹配模式: {project_profile.test_patterns})")
+    if len(test_files) < min_test_files:
+        errors.append(f"项目中测试文件不足 {min_test_files} 个")
 
     # 检查 state store 中的 tests_passed 标记
     state = _load_state(project_name, base_dir)
@@ -503,6 +549,8 @@ def check_test(project_name: str, base_dir: Path) -> CheckResult:
     if state is not None:
         tests_passed = state.get("tests_passed", False)
     details["tests_passed_flag"] = tests_passed
+    required_pass_rate = _check_threshold("test.required_pass_rate", 0.9)
+    details["required_pass_rate"] = required_pass_rate
     if not tests_passed:
         errors.append("tests_passed 标记为 false")
 
@@ -536,6 +584,8 @@ def check_accept(project_name: str, base_dir: Path) -> CheckResult:
     details["schema_version"] = schema_version
     verify_state_ok = True
     verify_record_ok = True
+    require_verified = _check_threshold("accept.require_verified", True)
+    details["require_verified"] = require_verified
     if features_data and isinstance(features_data, dict):
         features = features_data.get("features", [])
         if isinstance(features, list):
@@ -548,8 +598,8 @@ def check_accept(project_name: str, base_dir: Path) -> CheckResult:
                     all_passed = False
                     errors.append(f"feature {fid} 状态为 {status}，不是 passed")
 
-                # Phase 3: schema_version>=2 强制 verify_state==verified
-                if schema_version >= 2:
+                # 当 thresholds 要求 verified 时强制校验 verify_state
+                if require_verified:
                     verify_state = feat.get("verify_state", "pending")
                     if verify_state not in VERIFY_STATES:
                         verify_state_ok = False
@@ -1109,6 +1159,7 @@ def check_evaluate(project_name, base_dir):
     if not test_files:
         return {"passed": False, "reason": "no E2E test files", "details": {}}
     details = {"test_count": len(test_files)}
+    errors: List[str] = []
     # LLM-as-Judge 质量评估
     try:
         from evaluate import evaluate as _evaluate_fn
@@ -1119,12 +1170,19 @@ def check_evaluate(project_name, base_dir):
                                    judge_model="qwen3-coder-plus")
         details["evaluate"] = {"ran": True, "verdict": str(eval_result.verdict),
                                "total_score": eval_result.total_score}
+        min_score = _check_threshold("evaluate.llm_judge_min_score", 0.7)
+        details["llm_judge_min_score"] = min_score
+        # evaluate.py total_score is on a 1-10 scale; YAML value is normalized 0-1
+        if (eval_result.total_score / 10.0) < min_score:
+            errors.append(f"LLM judge 评分 {eval_result.total_score:.2f}/10 低于阈值 {min_score * 10:.1f}/10")
         if eval_result.verdict.value in ("BLOCK", "P0"):
-            errors = getattr(__builtins__ if 'errors' in dir(__builtins__) else None, 'errors', [])
+            errors.append(f"LLM judge  verdict 为 {eval_result.verdict.value}")
     except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
         details["evaluate"] = {"ran": False, "error": str(e)[:100]}
     # Inspector review
     details["inspector"] = _run_inspector_review("evaluate", proj_dir)
+    if errors:
+        return {"passed": False, "reason": " | ".join(errors), "details": details}
     return {"passed": True, "reason": f"{len(test_files)} E2E tests", "details": details}
 
 
