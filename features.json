@@ -24,7 +24,7 @@
         "全局替换 src/pipeline.py、src/phase_flow.py、src/entry.py、src/state_store.py、src/bridge_cli.py、src/phase_checks.py 及测试文件中的 Phase.* 旧用法",
         "pytest tests/test_registry.py tests/test_phase_model.py tests/test_pipeline.py tests/test_phase_flow.py tests/test_state_store.py tests/test_phase_checks.py -v 全部 PASS"
       ],
-      "status": "pending"
+      "status": "PASS"
     },
     {
       "id": "R2",
