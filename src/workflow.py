@@ -1,29 +1,40 @@
-"""src/workflow_template.py — GraphTemplate dataclass and phase definitions.
+"""src/workflow.py — Unified workflow template registry and graph templates.
 
-Defines the GraphTemplate dataclass used by workflow_registry to describe
-a named workflow: its ordered phases and dynamic conditions that can
-trigger branching behaviors during pipeline execution.
+This module merges the former ``workflow_registry.py`` and ``workflow_template.py``
+into a single, registry-driven workflow layer.
 
-Conditions supported:
-  - code_lines>500  → trigger_deep_review
-  - test_failures>3 → insert_fix_loop
-  - budget_80pct    → pause
-
-This module is imported by workflow_registry.py to build the
-WORKFLOW_TEMPLATES dictionary.
+Public API:
+  - GraphTemplate / WorkflowTemplate / ConditionRule
+  - DEFAULT_CONDITIONS / evaluate_conditions
+  - build_workflows() / WORKFLOW_TEMPLATES
+  - get_template(name) / list_templates() / register_template(template)
+  - detect_project_type(project_dir)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+try:
+    from config import get_config
+except ModuleNotFoundError:
+    from src.config import get_config
 
 
 __all__ = [
     "GraphTemplate",
+    "WorkflowTemplate",
     "ConditionRule",
     "DEFAULT_CONDITIONS",
     "evaluate_conditions",
+    "WORKFLOW_TEMPLATES",
+    "build_workflows",
+    "get_template",
+    "list_templates",
+    "register_template",
+    "detect_project_type",
 ]
 
 
@@ -42,6 +53,7 @@ class ConditionRule:
                 (e.g. "trigger_deep_review", "insert_fix_loop", "pause").
         description: Explanation of what this rule does.
     """
+
     name: str
     predicate: Callable[[Dict[str, Any]], bool]
     action: str
@@ -118,12 +130,13 @@ class GraphTemplate:
     dynamic conditions.
 
     Attributes:
-        name: Unique template name (e.g. "greenfield", "brownfield_fix").
+        name: Unique template name (e.g. "greenfield", "brownfield").
         phases: Ordered list of phase names defining the pipeline DAG.
         conditions: List of ConditionRule objects evaluated at runtime
                     to trigger branching (deep review, fix loop, pause).
         metadata: Arbitrary extra metadata (description, tags, etc.).
     """
+
     name: str
     phases: List[str]
     conditions: List[ConditionRule] = field(default_factory=lambda: list(DEFAULT_CONDITIONS))
@@ -159,6 +172,10 @@ class GraphTemplate:
         return self.phases[i + 1 : j]
 
 
+# Backward-compatible alias used by some callers.
+WorkflowTemplate = GraphTemplate
+
+
 # ───────────────────────────────────────────────────────────────
 # Condition evaluation helper
 # ───────────────────────────────────────────────────────────────
@@ -182,7 +199,130 @@ def evaluate_conditions(
         try:
             if rule.predicate(state):
                 triggered.append(rule)
-        except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError):
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            RuntimeError,
+            OSError,
+            ConnectionError,
+            TimeoutError,
+            ImportError,
+            AttributeError,
+        ):
             # Silently skip malformed predicates
             continue
     return triggered
+
+
+# ───────────────────────────────────────────────────────────────
+# Workflow template registry
+# ───────────────────────────────────────────────────────────────
+
+def build_workflows() -> Dict[str, GraphTemplate]:
+    """Build the canonical greenfield and brownfield workflow templates.
+
+    Phase order is sourced from ``config.py`` so a single configuration change
+    propagates to both the workflow layer and ``PhaseFlow``.
+    """
+    cfg = get_config()
+
+    return {
+        "greenfield": GraphTemplate(
+            name="greenfield",
+            phases=list(cfg.greenfield_phase_order),
+            conditions=list(DEFAULT_CONDITIONS),
+            metadata={
+                "description": "Full greenfield development pipeline.",
+                "phase_count": len(cfg.greenfield_phase_order),
+                "tags": ["new_project", "full_cycle"],
+            },
+        ),
+        "brownfield": GraphTemplate(
+            name="brownfield",
+            phases=list(cfg.brownfield_phase_order),
+            conditions=list(DEFAULT_CONDITIONS),
+            metadata={
+                "description": "Brownfield optimization pipeline (unified 7-phase chain).",
+                "phase_count": len(cfg.brownfield_phase_order),
+                "tags": ["existing_codebase", "brownfield"],
+            },
+        ),
+    }
+
+
+WORKFLOW_TEMPLATES: Dict[str, GraphTemplate] = build_workflows()
+
+
+def get_template(name: str) -> Optional[GraphTemplate]:
+    """Return the GraphTemplate for *name*, or None if not found."""
+    return WORKFLOW_TEMPLATES.get(name)
+
+
+def list_templates() -> List[str]:
+    """Return a sorted list of registered template names."""
+    return sorted(WORKFLOW_TEMPLATES.keys())
+
+
+def register_template(template: GraphTemplate) -> None:
+    """Register (or overwrite) a workflow template at runtime."""
+    WORKFLOW_TEMPLATES[template.name] = template
+
+
+# ───────────────────────────────────────────────────────────────
+# Project-type auto-detection
+# ───────────────────────────────────────────────────────────────
+
+def detect_project_type(
+    project_dir_or_name: str | Path, base_dir: Optional[Path] = None
+) -> str:
+    """Auto-detect the most appropriate workflow template for a project.
+
+    Supports two signatures for backward compatibility:
+      - detect_project_type(project_dir) -> "greenfield" | "brownfield"
+      - detect_project_type(project_name, base_dir) -> "greenfield" | "brownfield"
+
+    Heuristics (evaluated in order):
+      1. If project directory does NOT exist and no base_dir given -> "greenfield"
+      2. Sentinel files ``.audit`` / ``.hotfix`` / ``.fix`` -> "brownfield"
+      3. Existing ``src/`` directory with Python files -> "brownfield"
+      4. Existing ``docs/audit-*.md`` reports -> "brownfield"
+      5. ``features.json`` with passed features -> "brownfield"
+      6. Default -> "greenfield"
+
+    Returns:
+        One of "greenfield" or "brownfield".
+    """
+    if base_dir is not None:
+        proj_dir = Path(base_dir) / str(project_dir_or_name)
+    else:
+        candidate = Path(project_dir_or_name)
+        # If the argument looks like an existing path or contains path
+        # separators, treat it as a project directory.
+        if candidate.exists() or candidate.parent != Path("."):
+            proj_dir = candidate
+        else:
+            # Legacy/fallback: treat as a project name under the current dir.
+            proj_dir = Path(".") / str(project_dir_or_name)
+
+    proj_dir = proj_dir.resolve()
+
+    # 1. Greenfield: project directory does not exist yet
+    if not proj_dir.exists():
+        return "greenfield"
+
+    # 2. Sentinel files take priority
+    if any((proj_dir / sentinel).exists() for sentinel in (".audit", ".hotfix", ".fix")):
+        return "brownfield"
+
+    # 3+. Delegate to config mode detection, which looks at src/, audit docs,
+    # and features.json passed status.
+    try:
+        detected = get_config().detect_mode(proj_dir)
+        if detected == "brownfield":
+            return "brownfield"
+    except (ValueError, TypeError, KeyError, RuntimeError, OSError, ImportError, AttributeError):
+        pass
+
+    # Fallback: treat empty directory as greenfield
+    return "greenfield"

@@ -81,24 +81,33 @@ ADAPTER_QWEN = REGISTRY.get_agent("qwen-code").name          # Qwen Code CLI —
 
 
 # ───────────────────────────────────────────────────────────────
-# Hermes 自身处理的任务类型（不在 REGISTRY 中注册）
+# Hermes 自身处理的任务类型（已在 REGISTRY 中注册，default_agent 为空字符串）
 # ───────────────────────────────────────────────────────────────
 
 _HERMES_ONLY_TASKS: Dict[str, str] = {
-    "orchestrate": "",   # 编排/协调任务（仅限 Hermes）
-    "deploy": "",        # 部署任务
-    "analyze": "",       # 分析任务
+    task_type.name: task_type.default_agent
+    for task_type in REGISTRY.task_types.values()
+    if task_type.default_agent in ("", "hermes")
 }
 
 
 # ───────────────────────────────────────────────────────────────
-# 任务类型到真实 CLI Adapter 的映射（从 REGISTRY 生成）
+# 任务类型到真实 CLI Adapter 的映射（完全从 REGISTRY 生成）
 # ───────────────────────────────────────────────────────────────
 
 # Adapter 能力映射（反向查询，从 REGISTRY.agents 生成）
 ADAPTER_CAPABILITIES: Dict[str, List[str]] = {
     agent.name: list(agent.capabilities) for agent in REGISTRY.agents.values()
 }
+
+# Hermes 作为编排器，其能力由派发给自身的任务类型推导而来。
+_HERMES_CAPABILITIES = [
+    task_type.name
+    for task_type in REGISTRY.task_types.values()
+    if task_type.default_agent in ("", "hermes")
+]
+if _HERMES_CAPABILITIES:
+    ADAPTER_CAPABILITIES["hermes"] = _HERMES_CAPABILITIES
 
 # 向后兼容别名（逐步迁移）
 Agent = type('Agent', (), {
@@ -108,7 +117,6 @@ Agent = type('Agent', (), {
     'HERMES': 'hermes',  # 向后兼容，但标记为废弃
 })
 TASK_AGENT_MAP = {name: task_type.default_agent for name, task_type in REGISTRY.task_types.items()}
-TASK_AGENT_MAP.update(_HERMES_ONLY_TASKS)
 AGENT_CAPABILITIES = ADAPTER_CAPABILITIES
 
 
@@ -221,18 +229,15 @@ class SystemConstraint:
         """
         import time
 
-        # 解析任务类型：优先从 REGISTRY 查询，再识别 Hermes 自身任务
+        # 解析任务类型：完全从 REGISTRY 查询
         task_def = REGISTRY.get_task_type(task_type)
-        if task_def is not None:
-            target_adapter = task_def.default_agent
-        elif task_type in _HERMES_ONLY_TASKS:
-            target_adapter = ""
-        else:
+        if task_def is None:
             raise ConstraintViolation(
                 f"Unknown task type: {task_type}",
                 task_type=task_type,
                 action="route_task",
             )
+        target_adapter = task_def.default_agent
 
         # 确定目标 Adapter（空字符串表示由 Hermes 自身处理）
         if target_adapter is None:
@@ -478,6 +483,9 @@ class SystemConstraint:
         Returns:
             任务类型列表
         """
+        # Hermes 是编排器，不是 CLI Adapter；保留空列表以保持语义。
+        if adapter == "hermes":
+            return []
         return list(ADAPTER_CAPABILITIES.get(adapter, []))
 
     # 向后兼容别名

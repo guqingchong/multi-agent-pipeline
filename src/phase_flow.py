@@ -42,13 +42,43 @@ try:
 except (ModuleNotFoundError, ImportError):
     from src.config import get_config
 
+try:
+    from workflow import get_template
+except (ModuleNotFoundError, ImportError):
+    from src.workflow import get_template
+
 
 # ───────────────────────────────────────────────────────────────
-# 常量 / 配置
+# Phase order resolution
 # ───────────────────────────────────────────────────────────────
 
-PHASE_ORDER = get_config().phase_order
+def get_phase_order(project_type: Optional[str] = None) -> List[str]:
+    """Return the ordered phase chain for a project type.
+
+    When *project_type* is omitted, the default chain from ``config.py`` is
+    returned.  This function does not touch the filesystem.
+    """
+    if project_type is None:
+        return list(get_config().phase_order)
+
+    pt = project_type.lower()
+    if pt.startswith("brownfield"):
+        return list(get_config().brownfield_phase_order)
+    if pt == "greenfield":
+        return list(get_config().greenfield_phase_order)
+
+    # Unknown or legacy template name: try workflow template.
+    tmpl = get_template(pt)
+    if tmpl is not None:
+        return list(tmpl.phases)
+
+    return list(get_config().phase_order)
+
+
 DB_FILENAME = get_config().db_name
+
+# Backward-compatible module-level alias.
+PHASE_ORDER = get_phase_order()
 
 
 # ───────────────────────────────────────────────────────────────
@@ -71,6 +101,22 @@ class PhaseFlow:
         self.base_dir = base_dir
         self.proj_dir = base_dir / project_name
         self.store = self._get_store()
+        self.project_type = self._detect_project_type()
+        self.phase_order = get_phase_order(self.project_type)
+
+    def _detect_project_type(self) -> str:
+        """Infer project workflow type from features.json or config default."""
+        features_path = self.proj_dir / "features.json"
+        if features_path.exists():
+            try:
+                data = json.loads(features_path.read_text(encoding="utf-8"))
+                ptype = data.get("project_type")
+                if ptype in ("greenfield", "brownfield"):
+                    return ptype
+            except (json.JSONDecodeError, OSError):
+                pass
+        # Default to the configured pipeline mode without touching other files.
+        return get_config().pipeline_mode
 
     def _get_store(self) -> StateStore:
         db_path = self.proj_dir / DB_FILENAME
@@ -131,8 +177,8 @@ class PhaseFlow:
         3. 通过则更新 phase 并写入 checkpoint
         """
         phase = self.current_phase()
-        idx = PHASE_ORDER.index(phase)
-        if idx >= len(PHASE_ORDER) - 1:
+        idx = self.phase_order.index(phase)
+        if idx >= len(self.phase_order) - 1:
             return True, f"已在最终阶段 {phase}，无需推进"
 
         # 执行 check
@@ -140,7 +186,7 @@ class PhaseFlow:
         if not passed:
             return False, f"check 未通过，无法从 {phase} 推进: {msg}"
 
-        next_phase = PHASE_ORDER[idx + 1]
+        next_phase = self.phase_order[idx + 1]
 
         # 更新状态
         state = self._load_state() or {}
@@ -156,7 +202,7 @@ class PhaseFlow:
 
         需要人工审批（approved=True）。
         """
-        if target_phase not in PHASE_ORDER:
+        if target_phase not in self.phase_order:
             return False, f"未知 phase: {target_phase}"
 
         current = self.current_phase()

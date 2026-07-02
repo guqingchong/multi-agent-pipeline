@@ -135,7 +135,7 @@ def check_init(project_name: str, base_dir: Path) -> CheckResult:
     details["features_json_valid"] = features_data is not None
     # Workflow registry + condition engine
     try:
-        from workflow_registry import detect_project_type
+        from workflow import detect_project_type
         from condition_engine import ConditionEngine
         ptype = detect_project_type(str(proj_dir))
         details["workflow_type"] = {"ran": True, "type": str(ptype)}
@@ -253,7 +253,7 @@ def check_decompose(project_name: str, base_dir: Path) -> CheckResult:
     details["features_json_valid"] = features_data is not None
     # Workflow registry + condition engine
     try:
-        from workflow_registry import detect_project_type
+        from workflow import detect_project_type
         from condition_engine import ConditionEngine
         ptype = detect_project_type(str(proj_dir))
         details["workflow_type"] = {"ran": True, "type": str(ptype)}
@@ -1128,9 +1128,11 @@ def check_evaluate(project_name, base_dir):
     return {"passed": True, "reason": f"{len(test_files)} E2E tests", "details": details}
 
 
-# 从REGISTRY获取所有phase，然后映射到对应的检查函数
-# 这样可以确保phase名称与REGISTRY保持一致
-PHASE_TO_CHECK_FUNC = {
+# ───────────────────────────────────────────────────────────────
+# 检查函数注册表（显式字典注册，禁止 globals() 扫描）
+# ───────────────────────────────────────────────────────────────
+
+_CHECK_FUNCS: Dict[str, CheckFunc] = {
     "init": check_init,
     "design": check_design,
     "decompose": check_decompose,
@@ -1153,11 +1155,22 @@ PHASE_TO_CHECK_FUNC = {
     "deliver": check_deliver,
 }
 
-# 只注册在REGISTRY中存在的phases
+
+def register_check(name: str) -> Callable[[CheckFunc], CheckFunc]:
+    """显式注册一个检查函数（可选装饰器用法）。"""
+
+    def decorator(func: CheckFunc) -> CheckFunc:
+        _CHECK_FUNCS[name.lower()] = func
+        return func
+
+    return decorator
+
+
+# 只注册在 REGISTRY 中存在的 phases
 CHECK_REGISTRY: Dict[str, CheckFunc] = {
-    phase: PHASE_TO_CHECK_FUNC[phase] 
-    for phase in REGISTRY.list_phases() 
-    if phase in PHASE_TO_CHECK_FUNC
+    phase: _CHECK_FUNCS[phase]
+    for phase in REGISTRY.list_phases()
+    if phase in _CHECK_FUNCS
 }
 
 

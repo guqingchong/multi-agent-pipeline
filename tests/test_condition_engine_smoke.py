@@ -212,7 +212,7 @@ class TestConditionEngine:
         assert engine.rule_count() == 0
 
     def test_init_with_custom_rules(self):
-        from workflow_template import ConditionRule
+        from workflow import ConditionRule
         r = ConditionRule(
             name="test",
             predicate=lambda s: True,
@@ -224,7 +224,7 @@ class TestConditionEngine:
     # ── Rule management ──
 
     def test_register_rule(self):
-        from workflow_template import ConditionRule
+        from workflow import ConditionRule
         engine = ConditionEngine(auto_load_defaults=False)
         r = ConditionRule(name="r1", predicate=lambda s: True, action="a1")
         engine.register_rule(r)
@@ -232,7 +232,7 @@ class TestConditionEngine:
         assert engine.get_rule("r1") is r
 
     def test_register_overwrites(self):
-        from workflow_template import ConditionRule
+        from workflow import ConditionRule
         engine = ConditionEngine(auto_load_defaults=False)
         r1 = ConditionRule(name="r1", predicate=lambda s: False, action="a1")
         r2 = ConditionRule(name="r1", predicate=lambda s: True, action="a2")
@@ -494,7 +494,7 @@ class TestEvaluateContext:
         assert results[0].action == "trigger_deep_review"
 
     def test_convenience_with_custom_rules(self):
-        from workflow_template import ConditionRule
+        from workflow import ConditionRule
         r = ConditionRule(name="always", predicate=lambda s: True, action="pause")
         results = evaluate_context({"x": 1}, rules=[r])
         assert len(results) == 1

@@ -41,9 +41,9 @@ except ModuleNotFoundError:
     from src.phase_checks import run_check, get_all_phase_names
 
 try:
-    from phase_flow import PhaseFlow, PHASE_ORDER
+    from phase_flow import PhaseFlow
 except ModuleNotFoundError:
-    from src.phase_flow import PhaseFlow, PHASE_ORDER
+    from src.phase_flow import PhaseFlow
 
 try:
     from system_constraint import SystemConstraint, ConstraintViolation
@@ -153,7 +153,7 @@ class SuggestionEngine:
         current_phase = state.get("phase", self.flow.current_phase())
 
         # 1. 检查是否在最终阶段
-        if current_phase == PHASE_ORDER[-1]:
+        if current_phase == self.flow.phase_order[-1]:
             return Suggestion(
                 type=SuggestionType.INFO,
                 current_phase=current_phase,
@@ -283,7 +283,7 @@ class SuggestionEngine:
     def get_next_phase(self, state: Optional[Dict[str, Any]] = None) -> Optional[str]:
         """获取下一个 Phase
 
-        根据当前 phase 和 PHASE_ORDER 顺序返回下一个 phase 名称。
+        根据当前 phase 和 flow.phase_order 顺序返回下一个 phase 名称。
 
         Args:
             state: 可选的状态字典
@@ -295,16 +295,17 @@ class SuggestionEngine:
             state = self._load_state() or {}
 
         current_phase = state.get("phase", self.flow.current_phase())
+        order = self.flow.phase_order
 
         try:
-            idx = PHASE_ORDER.index(current_phase)
+            idx = order.index(current_phase)
         except ValueError:
             return None
 
-        if idx >= len(PHASE_ORDER) - 1:
+        if idx >= len(order) - 1:
             return None
 
-        return PHASE_ORDER[idx + 1]
+        return order[idx + 1]
 
     # ───────────────────────────────────────────────────────────
     # 批量生成建议（用于多项目/多 phase 场景）
@@ -326,9 +327,10 @@ class SuggestionEngine:
 
         current_phase = state.get("phase", self.flow.current_phase())
         suggestions: List[Suggestion] = []
+        order = self.flow.phase_order
 
         try:
-            current_idx = PHASE_ORDER.index(current_phase)
+            current_idx = order.index(current_phase)
         except ValueError:
             return suggestions
 
@@ -336,13 +338,13 @@ class SuggestionEngine:
         suggestions.append(self.suggest_next_phase(state))
 
         # 后续 phase 的预览建议（仅信息性）
-        for idx in range(current_idx + 1, len(PHASE_ORDER)):
-            phase = PHASE_ORDER[idx]
+        for idx in range(current_idx + 1, len(order)):
+            phase = order[idx]
             suggestions.append(
                 Suggestion(
                     type=SuggestionType.INFO,
                     current_phase=phase,
-                    next_phase=PHASE_ORDER[idx + 1] if idx + 1 < len(PHASE_ORDER) else None,
+                    next_phase=order[idx + 1] if idx + 1 < len(order) else None,
                     reason=f"后续 phase: {phase}",
                     can_advance=False,
                     requires_approval=False,
@@ -376,34 +378,29 @@ class SuggestionEngine:
         """检查系统约束是否满足
 
         验证当前 phase 的任务路由是否符合 system_constraint 约束。
+        phase->task_type 映射从当前 flow 的 phase 顺序动态推导，不再硬编码。
         """
+
+        def _phase_task_type(phase_name: str) -> Optional[str]:
+            p = phase_name.lower()
+            if p in ("develop", "execute"):
+                return "code"
+            if p in ("test", "verify"):
+                return "test"
+            if p in ("accept", "deliver"):
+                return "review"
+            if p == "deploy":
+                return "deploy"
+            if p == "init":
+                return "orchestrate"
+            # research / prd / design / decompose / journey / integrate /
+            # evaluate / discover / benchmark / analyze / plan 等均为分析类
+            return "analyze"
+
         try:
-            # 根据 phase 映射到任务类型
-            # Greenfield 阶段映射
-            greenfield_phase_task_map = {
-                "init": "orchestrate",
-                "design": "analyze",
-                "decompose": "analyze",
-                "develop": "code",
-                "test": "test",
-                "accept": "review",
-                "deploy": "deploy",
+            phase_task_map = {
+                p: _phase_task_type(p) for p in self.flow.phase_order
             }
-            
-            # Brownfield 阶段映射
-            brownfield_phase_task_map = {
-                "discover": "analyze",      # 发现阶段 - 分析现有系统
-                "benchmark": "analyze",     # 对标阶段 - 分析基准数据
-                "analyze": "analyze",       # 分析阶段 - 深入分析问题
-                "plan": "analyze",          # 计划阶段 - 制定优化方案
-                "execute": "code",          # 执行阶段 - 实施优化
-                "verify": "test",           # 验证阶段 - 验证优化效果
-                "deliver": "review",        # 交付阶段 - 审核优化成果
-            }
-            
-            # 合并两个映射
-            phase_task_map = {**greenfield_phase_task_map, **brownfield_phase_task_map}
-            
             task_type = phase_task_map.get(phase)
             if task_type is not None:
                 target_agent = self.constraint.get_agent_for_task(task_type)

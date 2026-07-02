@@ -34,9 +34,9 @@ except ImportError:
 # ───────────────────────────────────────────────────────────────
 
 try:
-    from workflow_template import ConditionRule, evaluate_conditions
+    from workflow import ConditionRule, evaluate_conditions
 except ModuleNotFoundError:
-    from src.workflow_template import ConditionRule, evaluate_conditions
+    from src.workflow import ConditionRule, evaluate_conditions
 
 
 __all__ = [

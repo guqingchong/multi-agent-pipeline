@@ -277,7 +277,10 @@ TASK_TYPE_DEFAULTS = [
     ("e2e",         "qwen-code"),     # E2E 测试
     ("inspector",   "qwen-code"),     # 独立审查
     ("adversarial", "claude-code"),   # 对抗审查（挑战方）
-    ("shutdown",    ""),              # 关闭任务，由Hermes自身处理
+    ("orchestrate", ""),              # 编排/协调任务（Hermes 自身）
+    ("deploy",      ""),              # 部署任务（Hermes 自身）
+    ("analyze",     ""),              # 分析任务（Hermes 自身）
+    ("shutdown",    ""),              # 关闭任务，由 Hermes 自身处理
 ]
 
 for _name, _agent in TASK_TYPE_DEFAULTS:
