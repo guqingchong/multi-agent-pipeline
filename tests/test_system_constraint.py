@@ -17,7 +17,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from src.system_constraint import (
+from system_constraint import (
     SystemConstraint,
     ConstraintConfig,
     ConstraintViolation,

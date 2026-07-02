@@ -380,7 +380,7 @@ def test_suggestion_engine_get_next_phase(init_project: tuple[str, Path]) -> Non
     project_name, base_dir = init_project
     engine = SuggestionEngine(project_name, base_dir)
     next_phase = engine.get_next_phase()
-    assert next_phase == "design"
+    assert next_phase == "prd"
 
 
 def test_suggestion_engine_get_next_phase_at_deploy(deploy_project: tuple[str, Path]) -> None:
@@ -505,7 +505,7 @@ def test_suggest_next_phase_advance_init(init_project: tuple[str, Path]) -> None
     suggestion = engine.suggest_next_phase()
     assert suggestion.type == SuggestionType.ADVANCE
     assert suggestion.current_phase == "init"
-    assert suggestion.next_phase == "design"
+    assert suggestion.next_phase == "prd"
     assert suggestion.can_advance is True
     assert suggestion.blockers == []
     assert "检查通过" in suggestion.reason
@@ -523,13 +523,13 @@ def test_suggest_next_phase_advance_design(design_project: tuple[str, Path]) -> 
 
 
 def test_suggest_next_phase_advance_decompose(decompose_project: tuple[str, Path]) -> None:
-    """v3.0: decompose → research"""
+    """v3.0: decompose → journey"""
     project_name, base_dir = decompose_project
     engine = SuggestionEngine(project_name, base_dir)
     suggestion = engine.suggest_next_phase()
     assert suggestion.type == SuggestionType.ADVANCE
     assert suggestion.current_phase == "decompose"
-    assert suggestion.next_phase == "research"
+    assert suggestion.next_phase == "journey"
     assert suggestion.can_advance is True
 
 
@@ -764,7 +764,7 @@ def test_suggest_next_phase_function(init_project: tuple[str, Path]) -> None:
     result = suggest_next_phase(project_name, base_dir)
     assert result["type"] == "advance"
     assert result["current_phase"] == "init"
-    assert result["next_phase"] == "design"
+    assert result["next_phase"] == "prd"
     assert result["can_advance"] is True
 
 
@@ -791,7 +791,7 @@ def test_check_blockers_function(init_project: tuple[str, Path]) -> None:
 def test_get_next_phase_function(init_project: tuple[str, Path]) -> None:
     project_name, base_dir = init_project
     next_phase = get_next_phase(project_name, base_dir)
-    assert next_phase == "design"
+    assert next_phase == "prd"
 
 
 def test_get_next_phase_function_deploy(deploy_project: tuple[str, Path]) -> None:
@@ -919,7 +919,7 @@ def test_full_pipeline_suggestions(init_project: tuple[str, Path]) -> None:
     s = engine.suggest_next_phase()
     assert s.type == SuggestionType.ADVANCE
     assert s.current_phase == "init"
-    assert s.next_phase == "design"
+    assert s.next_phase == "prd"
 
 
 def test_suggestion_types_are_distinct() -> None:

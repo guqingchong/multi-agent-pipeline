@@ -106,6 +106,19 @@ def test_workflow_template_alias() -> None:
     assert WorkflowTemplate is GraphTemplate
 
 
+def test_workflow_template_validate_passes_for_known_phases() -> None:
+    tmpl = GraphTemplate(name="valid", phases=["init", "design"])
+    tmpl.validate()
+
+
+def test_workflow_template_validate_fails_for_unknown_phases() -> None:
+    tmpl = GraphTemplate(name="invalid", phases=["init", "not_a_phase"])
+    with pytest.raises(ValueError) as exc_info:
+        tmpl.validate()
+    assert "invalid" in str(exc_info.value)
+    assert "not_a_phase" in str(exc_info.value)
+
+
 # ───────────────────────────────────────────────────────────────
 # Project-type detection tests
 # ───────────────────────────────────────────────────────────────

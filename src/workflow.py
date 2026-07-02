@@ -22,6 +22,11 @@ try:
 except ModuleNotFoundError:
     from src.config import get_config
 
+try:
+    from registry import REGISTRY
+except ModuleNotFoundError:
+    from src.registry import REGISTRY
+
 
 __all__ = [
     "GraphTemplate",
@@ -170,6 +175,18 @@ class GraphTemplate:
         if i == -1 or j == -1 or i >= j:
             return []
         return self.phases[i + 1 : j]
+
+    def validate(self) -> None:
+        """Validate that all referenced phases exist in the registry.
+
+        Raises:
+            ValueError: If any phase is not registered in ``REGISTRY.phases``.
+        """
+        missing = [p for p in self.phases if p not in REGISTRY.phases]
+        if missing:
+            raise ValueError(
+                f"Workflow {self.name!r} references unknown phases: {missing}"
+            )
 
 
 # Backward-compatible alias used by some callers.
