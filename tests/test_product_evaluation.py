@@ -98,45 +98,39 @@ class TestPhaseAdvanceSimulation:
     """Simulate user advancing through phases."""
 
     def test_full_legacy_flow(self, tmp_project_dir: Path) -> None:
-        """Simulate init -> develop -> review -> test flow."""
+        """Simulate init -> develop -> review -> test flow (legacy state machine)."""
         db_path = tmp_project_dir / "pipeline_state.db"
         store = StateStore(db_path)
         store.create_project("test_proj", "Test Project", "init")
-        
+
         # Phase 0: init
-        state = ProjectState(name="test_proj", phase=Phase.INIT, created=True, git_init=True, db_created=True, metadata_files=["SOUL.md", "AGENTS.md", "progress.md", "features.json"])
+        state = ProjectState(name="test_proj", phase=Phase("init"), created=True, git_init=True, db_created=True, metadata_files=["SOUL.md", "AGENTS.md", "progress.md", "features.json"])
         store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
         store.update_project_phase("test_proj", "init")
-        
+
         # Advance to develop
-        next_phase = state.phase.next()
-        assert next_phase == Phase.DEVELOP
-        state.phase = next_phase
+        state.phase = Phase("develop")
         state.check_results["develop_started"] = True
         state.check_results["code_written"] = True
         store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
         store.update_project_phase("test_proj", "develop")
-        
+
         # Advance to review
-        next_phase = state.phase.next()
-        assert next_phase == Phase.REVIEW
-        state.phase = next_phase
+        state.phase = Phase("review")
         store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
         store.update_project_phase("test_proj", "review")
-        
+
         # Advance to test
-        next_phase = state.phase.next()
-        assert next_phase == Phase.TEST
-        state.phase = next_phase
+        state.phase = Phase("test")
         state.check_results["tests_passed"] = True
         store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
         store.update_project_phase("test_proj", "test")
-        
+
         # Verify final state
         final_state = store.legacy_load("state")
         assert final_state is not None
         restored = ProjectState.from_dict(json.loads(final_state))
-        assert restored.phase == Phase.TEST
+        assert restored.phase == Phase("test")
         assert restored.check_results.get("tests_passed") is True
 
     def test_phase_blocked_when_checks_fail(self, tmp_project_dir: Path) -> None:
@@ -146,7 +140,7 @@ class TestPhaseAdvanceSimulation:
         store.create_project("test_proj", "Test Project", "init")
         
         # Missing required files
-        state = ProjectState(name="test_proj", phase=Phase.INIT, created=True, git_init=True, db_created=True, metadata_files=["SOUL.md"])
+        state = ProjectState(name="test_proj", phase=Phase("init"), created=True, git_init=True, db_created=True, metadata_files=["SOUL.md"])
         store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
         
         # Simulate check
@@ -168,14 +162,14 @@ class TestCheckpointMechanism:
         store = StateStore(db_path)
         store.create_project("test_proj", "Test Project", "init")
         
-        state = ProjectState(name="test_proj", phase=Phase.INIT, created=True, git_init=True, db_created=True)
+        state = ProjectState(name="test_proj", phase=Phase("init"), created=True, git_init=True, db_created=True)
         
         # Write checkpoint 1
         cp1 = store.write_checkpoint("test_proj", "init", state.to_dict(), action="init")
         assert cp1 > 0
         
         # Advance phase
-        state.phase = Phase.DEVELOP
+        state.phase = Phase("develop")
         state.check_results["develop_started"] = True
         cp2 = store.write_checkpoint("test_proj", "develop", state.to_dict(), action="advance")
         assert cp2 > cp1
@@ -367,7 +361,7 @@ class TestEndToEndIntegration:
         # 1. Init
         store.create_project("my_app", "My Application", "init")
         state = ProjectState(
-            name="my_app", phase=Phase.INIT,
+            name="my_app", phase=Phase("init"),
             created=True, git_init=True, db_created=True,
             metadata_files=["SOUL.md", "AGENTS.md", "progress.md", "features.json"],
         )
@@ -383,7 +377,7 @@ class TestEndToEndIntegration:
             store.create_feature(f)
         
         # 3. Advance to develop
-        state.phase = Phase.DEVELOP
+        state.phase = Phase("develop")
         state.check_results["code_written"] = True
         store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
         store.update_project_phase("my_app", "develop")

@@ -239,7 +239,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     store = _get_store(proj_dir)
     state = ProjectState(
         name=project_name,
-        phase=Phase.INIT,
+        phase=Phase("init"),
         description=description,
         stack=stack,
         created=True,
@@ -276,13 +276,13 @@ def cmd_develop(args: argparse.Namespace) -> int:
         print(f"[BLOCKED] Cannot enter develop: {msg}")
         return 1
 
-    if state.phase.value >= Phase.DEVELOP.value:
+    if state.phase.name in ("develop", "review", "test"):
         print(f"[OK] Already in {state.phase} phase, no need to advance")
         return 0
 
     # In new Phase 0-6, init->develop goes through design and decompose
     # For compatibility with old tests, directly advance to develop (legacy INIT->DEVELOP)
-    state.phase = Phase.DEVELOP
+    state.phase = Phase("develop")
     state.check_results["develop_started"] = True
     _save_state(store, project_name, state, "develop")
 
@@ -319,33 +319,42 @@ def cmd_advance(args: argparse.Namespace) -> int:
         # New PHASE_ORDER does not include review etc., fall back to legacy logic
         pass
 
-    # Fallback to legacy check logic (compatible with old tests)
+    # Fallback to legacy 3-state machine logic (compatible with old tests)
     store = _get_store(proj_dir)
     state = _load_state(store, project_name)
     if state is None:
         print(f"[BLOCKED] {msg}")
         return 1
 
-    next_phase = state.phase.next()
-    if next_phase is None:
+    # Legacy F005 order: init -> develop -> review -> test
+    legacy_order = ["init", "develop", "review", "test"]
+    phase_name = state.phase.name
+    if phase_name not in legacy_order:
+        print(f"[BLOCKED] {msg}")
+        return 1
+
+    idx = legacy_order.index(phase_name)
+    if idx >= len(legacy_order) - 1:
         print(f"[OK] Already in final phase {state.phase}, no need to advance")
         return 0
 
+    next_phase_name = legacy_order[idx + 1]
+
     # Legacy check mapping
     old_check_map = {
-        Phase.INIT: check_init,
-        Phase.DEVELOP: check_develop,
-        Phase.REVIEW: check_review,
-        Phase.TEST: check_test,
+        "init": check_init,
+        "develop": check_develop,
+        "review": check_review,
+        "test": check_test,
     }
-    old_check = old_check_map.get(state.phase)
+    old_check = old_check_map.get(phase_name)
     if old_check is not None:
         old_passed, old_msg = old_check(state)
         if old_passed:
             original_phase = state.phase
-            state.phase = next_phase
+            state.phase = Phase(next_phase_name)
             _save_state(store, project_name, state, f"advance:{state.phase.name.lower()}")
-            print(f"[OK] Advanced from {original_phase} to {next_phase}")
+            print(f"[OK] Advanced from {original_phase} to {state.phase}")
             return 0
         else:
             print(f"[BLOCKED] {old_msg}")

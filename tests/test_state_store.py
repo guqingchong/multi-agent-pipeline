@@ -467,7 +467,7 @@ def test_pipeline_resume_from_latest_checkpoint(init_project: str, tmp_cwd: Path
     # 验证状态已恢复
     state = _load_state(store, project_name)
     assert state is not None
-    assert state.phase == Phase.DEVELOP
+    assert state.phase == Phase("develop")
 
 
 def test_pipeline_resume_with_specific_checkpoint(init_project: str, tmp_cwd: Path, capsys) -> None:
@@ -481,7 +481,7 @@ def test_pipeline_resume_with_specific_checkpoint(init_project: str, tmp_cwd: Pa
     assert state is not None
     cp1 = _write_checkpoint(store, project_name, state, "init")
 
-    state.phase = Phase.DEVELOP
+    state.phase = Phase("develop")
     state.check_results["develop_started"] = True
     cp2 = _write_checkpoint(store, project_name, state, "develop")
 
@@ -495,7 +495,7 @@ def test_pipeline_resume_with_specific_checkpoint(init_project: str, tmp_cwd: Pa
 
     restored = _load_state(store, project_name)
     assert restored is not None
-    assert restored.phase == Phase.INIT
+    assert restored.phase == Phase("init")
 
 
 def test_pipeline_resume_no_checkpoint(init_project: str, tmp_cwd: Path, capsys) -> None:
@@ -540,7 +540,7 @@ def test_pipeline_rollback(init_project: str, tmp_cwd: Path, capsys) -> None:
 
     state = _load_state(store, project_name)
     assert state is not None
-    assert state.phase == Phase.INIT
+    assert state.phase == Phase("init")
 
 
 # ───────────────────────────────────────────────────────────────
@@ -577,8 +577,8 @@ def test_checkpoint_written_on_every_action(init_project: str, tmp_cwd: Path) ->
     
     # 更新 progress.md（check_develop 需要）
     progress_file = proj_dir / "progress.md"
-    progress_content = progress_file.read_text()
-    progress_file.write_text(progress_content + "\n## develop\n- 代码已编写\n")
+    progress_content = progress_file.read_text(encoding="utf-8")
+    progress_file.write_text(progress_content + "\n## develop\n- 代码已编写\n", encoding="utf-8")
     
     cmd_advance(type("Args", (), {"project": project_name})())
     cps = store.list_checkpoints(project_name)
@@ -615,7 +615,7 @@ def test_resume_restores_full_state(init_project: str, tmp_cwd: Path) -> None:
 
     restored = _load_state(store, project_name)
     assert restored is not None
-    assert restored.phase == Phase.TEST
+    assert restored.phase == Phase("test")
     assert restored.check_results.get("code_written") is True
     assert restored.check_results.get("tests_passed") is True
 

@@ -13,28 +13,42 @@ from models import Phase, ProjectState, PipelineError, PhaseBlockedError, Projec
 class TestPhase:
     def test_from_name_init(self):
         p = Phase.from_name("init")
-        assert p == Phase.INIT
+        assert p == Phase("init")
         assert str(p) == "init"
 
-    def test_from_name_review_legacy(self):
-        p = Phase.from_name("review")
-        assert p == Phase.REVIEW
-        assert str(p) == "review"
+    def test_from_name_develop(self):
+        p = Phase.from_name("develop")
+        assert p == Phase("develop")
+        assert str(p) == "develop"
 
-    def test_next_from_init(self):
-        assert Phase.INIT.next() == Phase.DEVELOP
+    def test_next_from_init_greenfield(self):
+        # Greenfield order: init -> prd -> research -> design -> ...
+        assert Phase("init").next() == Phase("prd")
 
-    def test_prev_from_test(self):
-        assert Phase.TEST.prev() == Phase.REVIEW
+    def test_prev_from_design_greenfield(self):
+        assert Phase("design").prev() == Phase("research")
 
     def test_invalid_phase_raises(self):
         with pytest.raises(ValueError):
             Phase.from_name("nonexistent")
 
+    def test_phase_equality_and_hash(self):
+        p1 = Phase("init")
+        p2 = Phase("init")
+        p3 = Phase("develop")
+        assert p1 == p2
+        assert p1 != p3
+        assert hash(p1) == hash(p2)
+
+    def test_is_start_and_terminal(self):
+        assert Phase("init").is_start("greenfield") is True
+        assert Phase("deploy").is_terminal("greenfield") is True
+        assert Phase("develop").is_terminal("greenfield") is False
+
 
 class TestProjectState:
     def test_to_dict(self):
-        s = ProjectState(name="test", phase=Phase.INIT, description="desc", stack="py")
+        s = ProjectState(name="test", phase=Phase("init"), description="desc", stack="py")
         d = s.to_dict()
         assert d["name"] == "test"
         assert d["phase"] == "init"
@@ -58,11 +72,11 @@ class TestProjectState:
         }
         s = ProjectState.from_dict(d)
         assert s.name == "test"
-        assert s.phase == Phase.DEVELOP
+        assert s.phase == Phase("develop")
         assert s.created is True
 
     def test_roundtrip(self):
-        s1 = ProjectState(name="proj", phase=Phase.DESIGN, description="d", stack="ts", created=True)
+        s1 = ProjectState(name="proj", phase=Phase("design"), description="d", stack="ts", created=True)
         d = s1.to_dict()
         s2 = ProjectState.from_dict(d)
         assert s2.name == s1.name

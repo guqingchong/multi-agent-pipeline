@@ -11,7 +11,11 @@ config / phase_checks / message_queue 等模块从 REGISTRY 读取定义，
 
 from __future__ import annotations
 
+import os
+import re
+import shutil
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 
@@ -64,6 +68,11 @@ class TaskTypeDef:
     default_agent: str = ""
 
 
+# Task type names must start with a lowercase letter and contain only
+# lowercase letters, digits, underscores, and hyphens.
+_TASK_TYPE_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+
 # ───────────────────────────────────────────────────────────────
 # 注册表实现
 # ───────────────────────────────────────────────────────────────
@@ -95,6 +104,10 @@ class Registry:
 
     def register_task_type(self, task_type: TaskTypeDef) -> None:
         """注册一个任务类型定义。"""
+        if not _TASK_TYPE_NAME_RE.match(task_type.name):
+            raise ValueError(
+                f"Invalid task type name {task_type.name!r}; must match ^[a-z][a-z0-9_-]*$"
+            )
         self.task_types[task_type.name] = task_type
 
     def mark_ready(self) -> None:
@@ -138,6 +151,25 @@ REGISTRY = Registry()
 
 
 # ───────────────────────────────────────────────────────────────
+# Agent CLI path resolution
+# ───────────────────────────────────────────────────────────────
+
+
+def _resolve_cli_path(agent_name: str, fallback: str) -> str:
+    """Resolve agent CLI path: env > registry fallback > PATH."""
+    env_key = f"AGENT_CLI_PATH_{agent_name.upper().replace('-', '_')}"
+    env_path = os.environ.get(env_key)
+    if env_path and Path(env_path).exists():
+        return str(Path(env_path).resolve())
+    if fallback and Path(fallback).exists():
+        return str(Path(fallback).resolve())
+    which = shutil.which(agent_name)
+    if which:
+        return which
+    return fallback  # return fallback so health check can report missing
+
+
+# ───────────────────────────────────────────────────────────────
 # 注册 Agent（3 个真实 CLI Agent）
 # ───────────────────────────────────────────────────────────────
 
@@ -145,12 +177,10 @@ REGISTRY = Registry()
 REGISTRY.register_agent(AgentDef(
     name="claude-code",
     capabilities=["code", "adversarial"],
-    cli_path=r"C:\Users\顾庆冲\AppData\Roaming\npm\claude.cmd",
+    cli_path=_resolve_cli_path("claude-code", r"claude.cmd"),
     cli_command="-p {prompt}",
     env_vars={
         "CLAUDE_CODE_SIMPLE": "1",
-        "ANTHROPIC_API_KEY": "",      # 运行时从 ~/.anthropic/ 或环境变量注入
-        "ANTHROPIC_BASE_URL": "",     # 运行时注入
     },
 ))
 
@@ -158,7 +188,7 @@ REGISTRY.register_agent(AgentDef(
 REGISTRY.register_agent(AgentDef(
     name="codewhale",
     capabilities=["review"],
-    cli_path=r"C:\Users\顾庆冲\AppData\Roaming\npm\codewhale-tui.exe",
+    cli_path=_resolve_cli_path("codewhale", r"codewhale-tui.exe"),
     cli_command="exec --auto {prompt}",
     env_vars={
         "AGENT_MOCK": "false",        # true 时返回 mock 结果，用于测试
@@ -169,12 +199,10 @@ REGISTRY.register_agent(AgentDef(
 REGISTRY.register_agent(AgentDef(
     name="qwen-code",
     capabilities=["test", "doc", "e2e", "inspector"],
-    cli_path=r"C:\Users\顾庆冲\AppData\Roaming\npm\qwen.cmd",
+    cli_path=_resolve_cli_path("qwen-code", r"qwen.cmd"),
     cli_command="prompt {prompt}",
     env_vars={
         "QWEN_CODE_SUPPRESS_YOLO_WARNING": "1",
-        "QWEN_API_KEY": "",           # 运行时注入
-        "OPENAI_API_KEY": "",         # 运行时注入
     },
 ))
 
@@ -210,7 +238,12 @@ GREENFIELD_PHASES = [
     ("deploy",     "check_deploy",     False),  # 部署上线
 ]
 
-for _name, _check, _evidence in BROWNFIELD_PHASES + GREENFIELD_PHASES:
+# Legacy compatibility phases (F005 3-state machine)
+LEGACY_PHASES = [
+    ("review", "check_review", False),  # 代码审核（legacy，兼容旧状态机）
+]
+
+for _name, _check, _evidence in BROWNFIELD_PHASES + GREENFIELD_PHASES + LEGACY_PHASES:
     REGISTRY.register_phase(PhaseDef(
         name=_name,
         check_func=_check,

@@ -1,7 +1,7 @@
 """src/models.py — Shared data models to break circular imports.
 
 This module contains core data models used across the pipeline:
-  - Phase enum
+  - Phase (imported from phase_model)
   - ProjectState dataclass
   - Unified exceptions
 
@@ -12,13 +12,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Dict, List, Optional
 
 try:
-    from registry import REGISTRY
+    from phase_model import PHASE_NAMES, Phase
 except ImportError:
-    from src.registry import REGISTRY
+    from src.phase_model import PHASE_NAMES, Phase
 
 
 __all__ = [
@@ -31,9 +30,6 @@ __all__ = [
     "CheckpointNotFoundError",
     "ApprovalRequiredError",
 ]
-# ───────────────────────────────────────────────────────────────
-# Unified exceptions
-# ───────────────────────────────────────────────────────────────
 
 class PipelineError(Exception):
     """Base exception for all pipeline errors."""
@@ -63,79 +59,6 @@ class ApprovalRequiredError(PipelineError):
 # ───────────────────────────────────────────────────────────────
 # Phase enum
 # ───────────────────────────────────────────────────────────────
-
-# Dynamic PHASE_NAMES from REGISTRY, maintaining order for backward compatibility
-# Filtering only the core phases that match the original enum mapping
-def _get_core_phase_names():
-    """Get the core phase names that map to the enum values, in the correct order."""
-    # Define the expected order based on the enum values
-    expected_order = ["init", "design", "decompose", "develop", "test", "accept", "deploy"]
-    
-    # Filter the registry phases to only include the expected ones
-    registry_phases = set(REGISTRY.list_phases())
-    core_phases = [phase for phase in expected_order if phase in registry_phases]
-    
-    # Ensure we have all expected phases
-    for phase in expected_order:
-        if phase not in registry_phases:
-            # Add it anyway to maintain compatibility, though it's not in registry
-            if phase not in core_phases:
-                core_phases.append(phase)
-    
-    return core_phases
-
-PHASE_NAMES = _get_core_phase_names()
-
-
-class Phase(Enum):
-    INIT = 0
-    DESIGN = 1
-    DECOMPOSE = 2
-    DEVELOP = 3
-    TEST = 4
-    ACCEPT = 5
-    DEPLOY = 6
-    # Backward-compatible alias (F005 legacy used REVIEW)
-    REVIEW = 7
-
-    def __str__(self) -> str:
-        if self.name == "REVIEW":
-            return "review"
-        return PHASE_NAMES[self.value]
-
-    @classmethod
-    def from_name(cls, name: str) -> Phase:
-        try:
-            return cls(PHASE_NAMES.index(name.lower()))
-        except ValueError:
-            if name.lower() == "review":
-                return cls.REVIEW
-            raise ValueError(f"Unknown phase: {name}")
-
-    def next(self) -> Optional[Phase]:
-        """Legacy-only: return the next phase for the old F005 3-state machine (INIT -> DEVELOP -> REVIEW -> TEST).
-
-        This does NOT cover the full v2 phase list (DESIGN, DECOMPOSE, ACCEPT, DEPLOY).
-        For new code, use explicit phase transitions instead of this helper.
-        """
-        if self.name == "INIT":
-            return Phase.DEVELOP
-        if self.name == "DEVELOP":
-            return Phase.REVIEW
-        if self.name == "REVIEW":
-            return Phase.TEST
-        return None
-
-    def prev(self) -> Optional[Phase]:
-        """Legacy-only: return the previous phase for the old F005 3-state machine."""
-        if self.name == "TEST":
-            return Phase.REVIEW
-        if self.name == "REVIEW":
-            return Phase.DEVELOP
-        if self.name == "DEVELOP":
-            return Phase.INIT
-        return None
-
 
 # ───────────────────────────────────────────────────────────────
 # ProjectState dataclass

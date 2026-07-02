@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -54,15 +54,15 @@ class PipelineConfig(BaseSettings):
         default_factory=lambda: {
             "greenfield": {
                 "label": "新建项目",
-                "phases": [phase for phase in REGISTRY.list_phases() 
-                          if phase in ["init", "design", "decompose", "research", "prd", "journey",
-                                       "develop", "integrate", "test", "evaluate", "accept", "deploy"]],
+                "phases": [phase for phase in REGISTRY.list_phases()
+                          if phase in ["init", "prd", "research", "design", "decompose",
+                                       "journey", "develop", "integrate", "test", "evaluate", "accept", "deploy"]],
                 "trigger": "default",
                 "description": "从零开始，先设计再开发",
             },
             "brownfield": {
                 "label": "存量优化",
-                "phases": [phase for phase in REGISTRY.list_phases() 
+                "phases": [phase for phase in REGISTRY.list_phases()
                           if phase in ["discover", "benchmark", "analyze", "plan",
                                        "execute", "verify", "deliver"]],
                 "trigger": "auto",  # features.json存在且passed>0时自动检测
@@ -75,6 +75,17 @@ class PipelineConfig(BaseSettings):
         default="greenfield",
         description="当前流水线模式（greenfield/brownfield）",
     )
+
+    greenfield_phase_order: List[str] = Field(default_factory=lambda: [
+        "init", "prd", "research", "design", "decompose",
+        "journey", "develop", "integrate", "test", "evaluate", "accept", "deploy"
+    ])
+    brownfield_phase_order: List[str] = Field(default_factory=lambda: [
+        "discover", "benchmark", "analyze", "plan", "execute", "verify", "deliver"
+    ])
+
+    agent_cli_paths: Dict[str, str] = Field(default_factory=dict)
+    """Map agent name -> absolute CLI path. Falls back to registry cli_path then PATH."""
 
     @property
     def phase_order(self) -> List[str]:

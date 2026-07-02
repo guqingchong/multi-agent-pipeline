@@ -70,24 +70,25 @@ def init_project(tmp_cwd: Path) -> str:
 # ───────────────────────────────────────────────────────────────
 
 def test_phase_names() -> None:
-    assert str(Phase.INIT) == "init"
-    assert str(Phase.DEVELOP) == "develop"
-    assert str(Phase.REVIEW) == "review"
-    assert str(Phase.TEST) == "test"
+    assert str(Phase("init")) == "init"
+    assert str(Phase("develop")) == "develop"
+    assert str(Phase("review")) == "review"
+    assert str(Phase("test")) == "test"
 
 
 def test_phase_from_name() -> None:
-    assert Phase.from_name("init") == Phase.INIT
-    assert Phase.from_name("develop") == Phase.DEVELOP
-    assert Phase.from_name("review") == Phase.REVIEW
-    assert Phase.from_name("test") == Phase.TEST
+    assert Phase.from_name("init") == Phase("init")
+    assert Phase.from_name("develop") == Phase("develop")
+    assert Phase.from_name("review") == Phase("review")
+    assert Phase.from_name("test") == Phase("test")
 
 
 def test_phase_next() -> None:
-    assert Phase.INIT.next() == Phase.DEVELOP
-    assert Phase.DEVELOP.next() == Phase.REVIEW
-    assert Phase.REVIEW.next() == Phase.TEST
-    assert Phase.TEST.next() is None
+    # Greenfield order is the default for the registry-driven Phase class.
+    assert Phase("init").next() == Phase("prd")
+    assert Phase("prd").next() == Phase("research")
+    assert Phase("research").next() == Phase("design")
+    assert Phase("deploy").next() is None
 
 
 # ───────────────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ def test_phase_next() -> None:
 def test_project_state_roundtrip() -> None:
     state = ProjectState(
         name="demo",
-        phase=Phase.DEVELOP,
+        phase=Phase("develop"),
         description="desc",
         stack="python",
         created=True,
@@ -109,7 +110,7 @@ def test_project_state_roundtrip() -> None:
     data = state.to_dict()
     restored = ProjectState.from_dict(data)
     assert restored.name == "demo"
-    assert restored.phase == Phase.DEVELOP
+    assert restored.phase == Phase("develop")
     assert restored.check_results["check_init"] is True
 
 
@@ -119,13 +120,13 @@ def test_project_state_roundtrip() -> None:
 
 def test_state_store_save_load(tmp_cwd: Path) -> None:
     store = StateStore(tmp_cwd)
-    state = ProjectState(name="x", phase=Phase.INIT)
+    state = ProjectState(name="x", phase=Phase("init"))
     store.save(state)
 
     loaded = store.load("x")
     assert loaded is not None
     assert loaded.name == "x"
-    assert loaded.phase == Phase.INIT
+    assert loaded.phase == Phase("init")
 
 
 def test_state_store_db_created(tmp_cwd: Path) -> None:
@@ -140,7 +141,7 @@ def test_state_store_db_created(tmp_cwd: Path) -> None:
 def test_check_init_pass() -> None:
     state = ProjectState(
         name="x",
-        phase=Phase.INIT,
+        phase=Phase("init"),
         created=True,
         git_init=True,
         db_created=True,
@@ -154,7 +155,7 @@ def test_check_init_pass() -> None:
 def test_check_init_fail_missing_files() -> None:
     state = ProjectState(
         name="x",
-        phase=Phase.INIT,
+        phase=Phase("init"),
         created=True,
         git_init=True,
         db_created=True,
@@ -168,7 +169,7 @@ def test_check_init_fail_missing_files() -> None:
 def test_check_init_fail_no_git() -> None:
     state = ProjectState(
         name="x",
-        phase=Phase.INIT,
+        phase=Phase("init"),
         created=True,
         git_init=False,
         db_created=True,
@@ -181,7 +182,7 @@ def test_check_init_fail_no_git() -> None:
 
 def test_check_develop_pass() -> None:
     state = ProjectState(
-        name="x", phase=Phase.DEVELOP,
+        name="x", phase=Phase("develop"),
         check_results={"develop_started": True, "code_written": True}
     )
     passed, msg = check_develop(state)
@@ -189,7 +190,7 @@ def test_check_develop_pass() -> None:
 
 
 def test_check_review_fail() -> None:
-    state = ProjectState(name="x", phase=Phase.REVIEW)
+    state = ProjectState(name="x", phase=Phase("review"))
     passed, msg = check_review(state)
     assert passed is False
     assert "code_written" in msg
@@ -198,7 +199,7 @@ def test_check_review_fail() -> None:
 def test_check_review_pass() -> None:
     state = ProjectState(
         name="x",
-        phase=Phase.REVIEW,
+        phase=Phase("review"),
         check_results={"code_written": True, "tests_passed": True},
     )
     passed, msg = check_review(state)
@@ -206,7 +207,7 @@ def test_check_review_pass() -> None:
 
 
 def test_check_test_fail() -> None:
-    state = ProjectState(name="x", phase=Phase.TEST)
+    state = ProjectState(name="x", phase=Phase("test"))
     passed, msg = check_test(state)
     assert passed is False
     assert "tests_passed" in msg
@@ -215,7 +216,7 @@ def test_check_test_fail() -> None:
 def test_check_test_pass() -> None:
     state = ProjectState(
         name="x",
-        phase=Phase.TEST,
+        phase=Phase("test"),
         check_results={"tests_passed": True},
     )
     passed, msg = check_test(state)
@@ -346,13 +347,13 @@ def test_full_phase_transition(init_project: str, tmp_cwd: Path, capsys) -> None
     # 1. init 阶段
     state = store.load(init_project)
     assert state is not None
-    assert state.phase == Phase.INIT
+    assert state.phase == Phase("init")
 
     # 2. develop
     ret = cmd_develop(type("Args", (), {"project": init_project})())
     assert ret == 0
     state = store.load(init_project)
-    assert state.phase == Phase.DEVELOP
+    assert state.phase == Phase("develop")
 
     # 3. review（需要 code_written）
     state.check_results["code_written"] = True
@@ -360,7 +361,7 @@ def test_full_phase_transition(init_project: str, tmp_cwd: Path, capsys) -> None
     ret = cmd_advance(type("Args", (), {"project": init_project})())
     assert ret == 0
     state = store.load(init_project)
-    assert state.phase == Phase.REVIEW
+    assert state.phase == Phase("review")
 
     # 4. test（需要 tests_passed）
     state.check_results["tests_passed"] = True
@@ -368,7 +369,7 @@ def test_full_phase_transition(init_project: str, tmp_cwd: Path, capsys) -> None
     ret = cmd_advance(type("Args", (), {"project": init_project})())
     assert ret == 0
     state = store.load(init_project)
-    assert state.phase == Phase.TEST
+    assert state.phase == Phase("test")
 
     # 5. 最终阶段无法继续推进
     ret = cmd_advance(type("Args", (), {"project": init_project})())
@@ -384,7 +385,7 @@ def test_advance_blocks_without_check(init_project: str, tmp_cwd: Path, capsys) 
     store = StateStore(tmp_cwd / init_project)
     state = store.load(init_project)
     assert state is not None
-    assert state.phase == Phase.DEVELOP
+    assert state.phase == Phase("develop")
 
     # 设置 develop_started=True 已通过 cmd_develop 自动设置
     # 但不设置 code_written，这样 advance develop -> review 时 check_review 会失败
@@ -398,4 +399,4 @@ def test_advance_blocks_without_check(init_project: str, tmp_cwd: Path, capsys) 
 
     # 确认 phase 没有变化
     state = store.load(init_project)
-    assert state.phase == Phase.DEVELOP
+    assert state.phase == Phase("develop")
