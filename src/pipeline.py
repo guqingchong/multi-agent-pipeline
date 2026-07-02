@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -47,6 +46,7 @@ except ModuleNotFoundError:
 try:
     from phase_flow import (
         PhaseFlow,
+        init_project,
         phase_check,
         phase_advance,
         phase_rollback,
@@ -57,6 +57,7 @@ try:
 except ModuleNotFoundError:
     from src.phase_flow import (
         PhaseFlow,
+        init_project,
         phase_check,
         phase_advance,
         phase_rollback,
@@ -147,48 +148,19 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"[ERROR] Project directory already exists: {proj_dir}")
         return 1
 
-    proj_dir.mkdir(parents=True, exist_ok=True)
-    (proj_dir / "src").mkdir(exist_ok=True)
-    (proj_dir / "tests").mkdir(exist_ok=True)
-    (proj_dir / "specs").mkdir(exist_ok=True)
-    (proj_dir / ".logs").mkdir(exist_ok=True)
-
-    metadata_files = []
-    for filename, content in [
-        ("SOUL.md", f"# SOUL.md\n\nProject: {project_name}\nDescription: {description}\nStack: {stack}\n"),
-        ("AGENTS.md", "# AGENTS.md\n\n## Collaboration Rules\n\n(TBD)\n"),
-        ("progress.md", f"# progress.md\n\nProject: {project_name}\nCurrent Phase: init\n"),
-        ("features.json", json.dumps({"project": project_name, "features": []}, indent=2)),
-    ]:
-        filepath = proj_dir / filename
-        filepath.write_text(content, encoding="utf-8")
-        metadata_files.append(filename)
-
-    git_init = False
-    result = subprocess.run(["git", "init", "-q"], cwd=str(proj_dir), capture_output=True)
-    if result.returncode == 0:
-        git_init = True
-
-    store = _get_store(base_dir, project_name)
-    state = ProjectState(
-        name=project_name,
-        phase=Phase("init"),
+    state, metadata_files, git_init = init_project(
+        project_name=project_name,
+        base_dir=base_dir,
         description=description,
         stack=stack,
-        created=True,
-        git_init=git_init,
-        metadata_files=metadata_files,
-        db_created=True,
     )
-    _save_state(store, project_name, state, "init")
-    store.create_project(project_id=project_name, name=project_name, current_phase="init")
 
     print(f"[OK] Project '{project_name}' initialized")
     print(f"     Directory: {base_dir}")
     print(f"     Phase: {state.phase}")
     print(f"     Metadata files: {', '.join(metadata_files)}")
     print(f"     Git: {'initialized' if git_init else 'init failed'}")
-    print(f"     DB: {store.db_path}")
+    print(f"     DB: {base_dir / project_name / DB_FILENAME}")
     return 0
 
 
@@ -319,7 +291,7 @@ def cmd_rollback_phase(args: argparse.Namespace) -> int:
 
     passed, msg = phase_rollback(project_name, base_dir, target_phase, approved=approved)
     if not passed:
-        if "approval" in msg.lower() or "approved" in msg.lower() or "审批" in msg:
+        if "approval" in msg.lower() or "approved" in msg.lower():
             print(f"[BLOCKED] {msg}")
         else:
             print(f"[ERROR] {msg}")

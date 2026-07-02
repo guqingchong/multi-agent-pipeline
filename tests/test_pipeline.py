@@ -28,10 +28,19 @@ def tmp_cwd(monkeypatch) -> Generator[Path, None, None]:
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def _get_subparsers_action(parser):
+    """Return the argparse _SubParsersAction via a stable lookup."""
+    import argparse
+    return next(
+        action for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+
+
 def test_build_parser_lists_registry_phases(tmp_cwd: Path) -> None:
     """Parser choices must come from REGISTRY.list_phases()."""
     parser = build_parser()
-    subparsers_action = parser._subparsers._group_actions[0]
+    subparsers_action = _get_subparsers_action(parser)
     rollback_parser = subparsers_action.choices["rollback-phase"]
     to_action = next(a for a in rollback_parser._actions if getattr(a, "dest", None) == "to")
     choices = to_action.choices
@@ -44,7 +53,7 @@ def test_build_parser_lists_registry_phases(tmp_cwd: Path) -> None:
 
 def test_parser_approve_only_design_and_accept(tmp_cwd: Path) -> None:
     parser = build_parser()
-    subparsers_action = parser._subparsers._group_actions[0]
+    subparsers_action = _get_subparsers_action(parser)
     approve_parser = subparsers_action.choices["approve"]
     phase_action = next(a for a in approve_parser._actions if getattr(a, "dest", None) == "phase")
     choices = phase_action.choices
@@ -68,12 +77,14 @@ def test_status_command_after_init(tmp_cwd: Path) -> None:
     assert ret == 0
 
 
-def test_advance_command_blocked_without_check(tmp_cwd: Path) -> None:
+def test_advance_command_blocked_without_check(tmp_cwd: Path, capsys) -> None:
     main(["init", "demo"])
+    # Remove a required init-phase artifact so the init check fails.
+    (tmp_cwd / "demo" / "SOUL.md").unlink()
     ret = main(["advance", "demo"])
-    # init check requires git + metadata files; should pass if init succeeded.
-    # If blocked, return code is 1.
-    assert ret in (0, 1)
+    captured = capsys.readouterr()
+    assert ret == 1
+    assert "BLOCKED" in captured.out or "blocked" in captured.out.lower()
 
 
 def test_rollback_phase_requires_approval(tmp_cwd: Path) -> None:

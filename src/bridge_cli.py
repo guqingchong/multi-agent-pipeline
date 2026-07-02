@@ -32,7 +32,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -159,9 +158,7 @@ def check_endpoint_availability(adapter_name: str) -> Dict[str, Any]:
 
 def cmd_init(project_name: str, description: str = "", stack: str = "", force: bool = False) -> Dict[str, Any]:
     """Initialize a project directly using StateStore/PhaseFlow."""
-    from state_store import StateStore
-    from phase_flow import PhaseFlow
-    from models import ProjectState, Phase
+    from phase_flow import init_project
 
     base_dir = get_base_dir()
     proj_dir = base_dir / project_name
@@ -174,42 +171,11 @@ def cmd_init(project_name: str, description: str = "", stack: str = "", force: b
             "return_code": 1,
         }
 
-    proj_dir.mkdir(parents=True, exist_ok=True)
-    for sub in ("src", "tests", "specs", ".logs"):
-        (proj_dir / sub).mkdir(exist_ok=True)
-
-    metadata_files = []
-    for filename, content in [
-        ("SOUL.md", f"# SOUL.md\n\nProject: {project_name}\nDescription: {description}\nStack: {stack}\n"),
-        ("AGENTS.md", "# AGENTS.md\n\n## Collaboration Rules\n\n(TBD)\n"),
-        ("progress.md", f"# progress.md\n\nProject: {project_name}\nCurrent Phase: init\n"),
-        ("features.json", json.dumps({"project": project_name, "features": []}, indent=2)),
-    ]:
-        (proj_dir / filename).write_text(content, encoding="utf-8")
-        metadata_files.append(filename)
-
-    git_init = subprocess.run(["git", "init", "-q"], cwd=str(proj_dir), capture_output=True).returncode == 0
-
-    store = StateStore(proj_dir / get_config().db_name)
-    state = ProjectState(
-        name=project_name,
-        phase=Phase("init"),
+    state, metadata_files, git_init = init_project(
+        project_name=project_name,
+        base_dir=base_dir,
         description=description,
         stack=stack,
-        created=True,
-        git_init=git_init,
-        metadata_files=metadata_files,
-        db_created=True,
-    )
-    store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
-    store.create_project(project_id=project_name, name=project_name, current_phase="init")
-    store.write_checkpoint(
-        project_id=project_name,
-        phase="init",
-        state_dict=state.to_dict(),
-        agent="bridge_cli",
-        action="init",
-        result="ok",
     )
 
     return {

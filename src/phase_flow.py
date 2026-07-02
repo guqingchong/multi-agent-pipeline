@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -51,6 +52,11 @@ try:
     from inspector import Inspector, AuditVerdict
 except (ModuleNotFoundError, ImportError):
     from src.inspector import Inspector, AuditVerdict
+
+try:
+    from models import ProjectState, Phase
+except ModuleNotFoundError:
+    from src.models import ProjectState, Phase
 
 
 # ───────────────────────────────────────────────────────────────
@@ -234,8 +240,8 @@ class PhaseFlow:
 
         if not approved:
             return False, (
-                f"回退到 {target_phase} 需要人工审批。"
-                "请使用 --approved 确认已审批。"
+                f"Rollback to {target_phase} requires manual approval. "
+                "Use --approved to confirm."
             )
 
         # 更新状态
@@ -255,7 +261,7 @@ class PhaseFlow:
         state.setdefault("phase", self.current_phase())
         self._save_state(state)
         self._write_checkpoint(state, "approve:design")
-        return True, "design 已审批通过"
+        return True, "design approved"
 
     def approve_accept(self) -> Tuple[bool, str]:
         """审批 accept phase"""
@@ -265,7 +271,7 @@ class PhaseFlow:
         state.setdefault("phase", self.current_phase())
         self._save_state(state)
         self._write_checkpoint(state, "approve:accept")
-        return True, "accept 已审批通过"
+        return True, "accept approved"
 
     def mark_tests(self, passed: bool) -> Tuple[bool, str]:
         """标记端到端测试状态"""
@@ -275,7 +281,7 @@ class PhaseFlow:
         state.setdefault("phase", self.current_phase())
         self._save_state(state)
         self._write_checkpoint(state, f"mark_tests:{passed}")
-        return True, f"tests_passed 标记为 {passed}"
+        return True, f"tests_passed set to {passed}"
 
 
 # ───────────────────────────────────────────────────────────────
@@ -318,3 +324,65 @@ def phase_mark_tests(project_name: str, base_dir: Path, passed: bool) -> Tuple[b
     """标记测试状态"""
     flow = PhaseFlow(project_name, base_dir)
     return flow.mark_tests(passed)
+
+
+# ───────────────────────────────────────────────────────────────
+# Shared project initialization
+# ───────────────────────────────────────────────────────────────
+
+def init_project(
+    project_name: str,
+    base_dir: Path,
+    description: str = "",
+    stack: str = "",
+) -> Tuple[ProjectState, List[str], bool]:
+    """Create project directory, metadata files, git repo and state store.
+
+    Callers are responsible for checking whether the project directory already
+    exists and deciding whether to overwrite.  This helper performs the actual
+    creation and persists the initial state.
+
+    Returns:
+        (initial ProjectState, list of metadata filenames, git_init success)
+    """
+    cfg = get_config()
+    proj_dir = base_dir / project_name
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    cfg.ensure_dirs(proj_dir)
+
+    metadata_files = []
+    for filename, content in [
+        ("SOUL.md", f"# SOUL.md\n\nProject: {project_name}\nDescription: {description}\nStack: {stack}\n"),
+        ("AGENTS.md", "# AGENTS.md\n\n## Collaboration Rules\n\n(TBD)\n"),
+        ("progress.md", f"# progress.md\n\nProject: {project_name}\nCurrent Phase: init\n"),
+        ("features.json", json.dumps({"project": project_name, "features": []}, indent=2)),
+    ]:
+        filepath = proj_dir / filename
+        filepath.write_text(content, encoding="utf-8")
+        metadata_files.append(filename)
+
+    git_init = subprocess.run(["git", "init", "-q"], cwd=str(proj_dir), capture_output=True).returncode == 0
+
+    store = StateStore(cfg.db_path(proj_dir))
+    state = ProjectState(
+        name=project_name,
+        phase=Phase("init"),
+        description=description,
+        stack=stack,
+        created=True,
+        git_init=git_init,
+        metadata_files=metadata_files,
+        db_created=True,
+    )
+    store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
+    store.create_project(project_id=project_name, name=project_name, current_phase="init")
+    store.write_checkpoint(
+        project_id=project_name,
+        phase="init",
+        state_dict=state.to_dict(),
+        agent="phase_flow",
+        action="init",
+        result="ok",
+    )
+
+    return state, metadata_files, git_init

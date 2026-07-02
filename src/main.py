@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -24,6 +25,7 @@ from registry import REGISTRY
 from config import get_config
 from state_store import StateStore
 from phase_flow import PhaseFlow
+from models import ProjectState
 import src.queue as queue_mod
 
 
@@ -65,16 +67,6 @@ class QueueStatsResponse(BaseModel):
     dead_letter: int
     by_agent: Dict[str, int]
     by_type: Dict[str, int]
-
-
-class ProjectStatusResponse(BaseModel):
-    name: str
-    exists: bool
-    current_phase: str
-
-
-class AdvanceRequest(BaseModel):
-    approved: bool = True
 
 
 class AdvanceResponse(BaseModel):
@@ -158,23 +150,31 @@ async def queue_stats():
     )
 
 
-@app.get("/projects/{name}", response_model=ProjectStatusResponse)
+@app.get("/projects/{name}")
 async def get_project(name: str):
-    """Get project status from StateStore."""
+    """Get project state from StateStore."""
     project_dir = _project_dir(name)
     db_path = get_config().db_path(project_dir)
 
     if not db_path.exists():
-        return ProjectStatusResponse(name=name, exists=False, current_phase="unknown")
+        return {"name": name, "exists": False, "phase": "unknown"}
 
     store = StateStore(db_path)
+    raw_state = store.legacy_load("state")
+    if raw_state:
+        try:
+            state = ProjectState.from_dict(json.loads(raw_state))
+            return state.to_dict()
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+
     record = store.get_project(name)
     phase = record.current_phase if record else "unknown"
-    return ProjectStatusResponse(name=name, exists=True, current_phase=phase)
+    return {"name": name, "exists": True, "phase": phase}
 
 
 @app.post("/projects/{name}/advance", response_model=AdvanceResponse)
-async def advance_project(name: str, request: AdvanceRequest):
+async def advance_project(name: str):
     """Advance project to next phase using PhaseFlow."""
     project_dir = _project_dir(name)
     if not project_dir.exists():

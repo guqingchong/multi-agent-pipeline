@@ -70,7 +70,7 @@ def test_get_project_not_found(client: TestClient, tmp_base_dir: Path) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["exists"] is False
-    assert data["current_phase"] == "unknown"
+    assert data["phase"] == "unknown"
 
 
 def test_get_project_exists(client: TestClient, tmp_base_dir: Path) -> None:
@@ -85,12 +85,12 @@ def test_get_project_exists(client: TestClient, tmp_base_dir: Path) -> None:
     response = client.get(f"/projects/{project_name}")
     assert response.status_code == 200
     data = response.json()
-    assert data["exists"] is True
-    assert data["current_phase"] == "init"
+    assert data["name"] == project_name
+    assert data["phase"] == "init"
 
 
 def test_advance_project_not_found(client: TestClient, tmp_base_dir: Path) -> None:
-    response = client.post("/projects/nonexistent/advance", json={})
+    response = client.post("/projects/nonexistent/advance")
     assert response.status_code == 404
 
 

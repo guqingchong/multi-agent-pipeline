@@ -36,7 +36,9 @@ if (-not $BaseDir) {
 }
 $env:MULTI_AGENT_PIPELINE_BASE_DIR = (Resolve-Path $BaseDir).Path
 $env:PIPELINE__PIPELINE_MODE = $Mode
-$env:AGENT_MOCK = $env:AGENT_MOCK ?? "false"
+if (-not $env:AGENT_MOCK) {
+    $env:AGENT_MOCK = "true"
+}
 
 Write-Host "MULTI_AGENT_PIPELINE_BASE_DIR = $env:MULTI_AGENT_PIPELINE_BASE_DIR"
 Write-Host "PIPELINE__PIPELINE_MODE       = $env:PIPELINE__PIPELINE_MODE"
