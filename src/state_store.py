@@ -685,7 +685,6 @@ class StateStore:
 
     def write_dispatch_history(
         self,
-        project_id: Optional[str] = None,
         task_id: Optional[str] = None,
         agent: Optional[str] = None,
         task_type: Optional[str] = None,
@@ -694,6 +693,7 @@ class StateStore:
         exec_mode: str = "async",
         output: Optional[str] = None,
         error: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> int:
         """写入一次 dispatch 历史记录，同步路径应标注 exec_mode='sync'。"""
         with self._conn() as conn:

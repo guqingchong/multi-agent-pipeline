@@ -567,7 +567,7 @@ def check_test(project_name: str, base_dir: Path) -> CheckResult:
     details["total_features"] = total_features
     details["passed_features"] = passed_features
     details["pass_rate"] = pass_rate
-    if pass_rate < required_pass_rate:
+    if total_features > 0 and pass_rate < required_pass_rate:
         errors.append(
             f"feature 通过率 {pass_rate:.2%} 低于阈值 {required_pass_rate:.0%}"
         )

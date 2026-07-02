@@ -608,6 +608,25 @@ def test_check_test_fail_no_tests(develop_project: tuple[str, Path]) -> None:
     assert "测试文件" in result["reason"] or "tests_passed" in result["reason"]
 
 
+def test_check_test_zero_features_pass_rate_not_applicable(
+    test_project: tuple[str, Path],
+) -> None:
+    """features.json 为空时，不应仅因通过率为 0% 而失败。"""
+    project_name, base_dir = test_project
+    proj_dir = base_dir / project_name
+    features = {
+        "project": project_name,
+        "features": [],
+    }
+    (proj_dir / "features.json").write_text(
+        json.dumps(features, ensure_ascii=False), encoding="utf-8"
+    )
+    result = check_test(project_name, base_dir)
+    assert result["passed"] is True, result["reason"]
+    assert result["details"]["total_features"] == 0
+    assert result["details"]["pass_rate"] == 0.0
+
+
 # ───────────────────────────────────────────────────────────────
 # 7. check_accept 测试
 # ───────────────────────────────────────────────────────────────
