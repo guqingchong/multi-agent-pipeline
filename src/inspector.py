@@ -93,7 +93,7 @@ class Inspector:
 
         # Example: execute phase must not violate architecture boundaries
         if phase == "execute":
-            changed_summary = evidence.get("changed_files", [])
+            changed_summary = list(evidence.get("changed_files") or [])
             if architecture and "外部 API 接口" in architecture:
                 if any("api" in f.lower() for f in changed_summary):
                     report.risks.append("检测到 api 相关文件改动，请确认未修改外部接口契约。")

@@ -8,7 +8,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from bridge_cli import get_base_dir, cmd_load, cmd_route, cmd_check_hermes, cmd_suggest
+from bridge_cli import (
+    get_base_dir,
+    cmd_load,
+    cmd_route,
+    cmd_check_hermes,
+    cmd_suggest,
+    cmd_inspect,
+    cmd_audit_report,
+)
+from state_store import StateStore
 
 
 class TestGetBaseDir:
@@ -61,3 +70,47 @@ class TestImports:
         assert callable(cmd_check_hermes)
         assert callable(cmd_suggest)
         assert callable(cmd_full)
+
+
+class TestCmdInspect:
+    def test_inspect_returns_audit_report(self, tmp_path, monkeypatch):
+        """inspect command should run Inspector.audit and return a report dict."""
+        monkeypatch.setenv("MULTI_AGENT_PIPELINE_BASE_DIR", str(tmp_path))
+        project_dir = tmp_path / "demo"
+        docs_dir = project_dir / "docs"
+        docs_dir.mkdir(parents=True)
+        (docs_dir / "prd.md").write_text("必须将响应时间降到 3 秒以内。", encoding="utf-8")
+        (docs_dir / "plan.md").write_text("我们将优化响应时间。", encoding="utf-8")
+
+        result = cmd_inspect("demo", phase="plan")
+
+        assert result["command"] == "inspect"
+        assert result["project"] == "demo"
+        assert result["phase"] == "plan"
+        assert "report" in result
+        assert result["report"]["verdict"] == "pass"
+
+
+class TestCmdAuditReport:
+    def test_audit_report_returns_inspector_logs(self, tmp_path, monkeypatch):
+        """audit-report command should return inspector_audit events from StateStore."""
+        monkeypatch.setenv("MULTI_AGENT_PIPELINE_BASE_DIR", str(tmp_path))
+        project_dir = tmp_path / "demo"
+        project_dir.mkdir(parents=True)
+        db_path = project_dir / "pipeline_state.db"
+        store = StateStore(db_path)
+        store.log_audit(
+            project_id="demo",
+            phase="plan",
+            event="inspector_audit",
+            details={"verdict": "pass", "findings": []},
+        )
+
+        result = cmd_audit_report("demo")
+
+        assert result["command"] == "audit-report"
+        assert result["project"] == "demo"
+        assert len(result["logs"]) == 1
+        assert result["logs"][0]["phase"] == "plan"
+        assert result["logs"][0]["event"] == "inspector_audit"
+        assert result["logs"][0]["details"]["verdict"] == "pass"

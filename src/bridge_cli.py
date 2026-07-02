@@ -377,9 +377,10 @@ def cmd_inspect(project_name: str, phase: str = "") -> Dict[str, Any]:
 def cmd_audit_report(project_name: str) -> Dict[str, Any]:
     """Show inspector audit history."""
     from state_store import StateStore
+    from config import get_config
 
     base_dir = get_base_dir()
-    db_path = base_dir / project_name / "pipeline_state.db"
+    db_path = get_config().db_path(base_dir / project_name)
     store = StateStore(db_path)
     logs = store.list_audit_logs(project_name, event="inspector_audit", limit=50)
     return {
