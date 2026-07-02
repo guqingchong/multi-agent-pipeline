@@ -31,7 +31,7 @@ from src.entry import (
     INTENT_KEYWORDS,
 )
 from src.state_store import StateStore, FeatureRecord, ProjectRecord
-from src.pipeline import ProjectState, Phase
+from src.models import ProjectState, Phase
 
 
 # ───────────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ class TestAutoLoad:
         assert ctx.project_name == "Test Project"
         assert ctx.current_phase == "develop"
         assert ctx.state is not None
-        assert ctx.state.phase == Phase.DEVELOP
+        assert ctx.state.phase is Phase.DEVELOP
         assert len(ctx.features) == 4
 
     def test_load_nonexistent_project(self, nonexistent_project):
@@ -610,7 +610,7 @@ class TestIntegration:
 
         # 第一次加载
         ctx1 = auto_load(project_id, base)
-        assert ctx1.state.phase == Phase.DEVELOP
+        assert ctx1.state.phase is Phase.DEVELOP
 
         # 修改状态（模拟 checkpoint 后的状态变化）
         db_path = base / project_id / "pipeline_state.db"

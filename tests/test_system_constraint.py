@@ -22,14 +22,17 @@ from src.system_constraint import (
     ConstraintConfig,
     ConstraintViolation,
     HermesPermissionDenied,
-    TaskType,
-    Agent,
-    TASK_AGENT_MAP,
-    AGENT_CAPABILITIES,
+    ADAPTER_CAPABILITIES,
+    get_task_adapter,
     get_task_agent,
     assert_hermes_orchestration,
     route_task,
 )
+
+try:
+    from registry import REGISTRY
+except ImportError:
+    from src.registry import REGISTRY
 
 
 # ───────────────────────────────────────────────────────────────
@@ -42,50 +45,50 @@ class TestTaskRouting:
     def test_route_code_to_claude(self):
         sc = SystemConstraint()
         result = sc.route_task("code", {"feature_id": "F001"})
-        assert result["target_agent"] == "claude"
+        assert result["target_adapter"] == "claude-code"
         assert result["task_type"] == "code"
         assert result["constraint_enforced"] is True
 
     def test_route_review_to_codewhale(self):
         sc = SystemConstraint()
         result = sc.route_task("review", {"pr_id": "PR-42"})
-        assert result["target_agent"] == "codewhale"
+        assert result["target_adapter"] == "codewhale"
         assert result["task_type"] == "review"
 
     def test_route_test_to_qwen(self):
         sc = SystemConstraint()
         result = sc.route_task("test", {"test_suite": "unit"})
-        assert result["target_agent"] == "qwen"
+        assert result["target_adapter"] == "qwen-code"
         assert result["task_type"] == "test"
 
     def test_route_e2e_to_qwen(self):
         sc = SystemConstraint()
         result = sc.route_task("e2e", {"browser": "playwright"})
-        assert result["target_agent"] == "qwen"
+        assert result["target_adapter"] == "qwen-code"
         assert result["task_type"] == "e2e"
 
     def test_route_doc_to_qwen(self):
         sc = SystemConstraint()
         result = sc.route_task("doc", {"lang": "zh"})
-        assert result["target_agent"] == "qwen"
+        assert result["target_adapter"] == "qwen-code"
         assert result["task_type"] == "doc"
 
     def test_route_orchestrate_to_hermes(self):
         sc = SystemConstraint()
         result = sc.route_task("orchestrate", {"pipeline": "wave1"})
-        assert result["target_agent"] == "hermes"
+        assert result["target_adapter"] == ""
         assert result["task_type"] == "orchestrate"
 
     def test_route_deploy_to_hermes(self):
         sc = SystemConstraint()
         result = sc.route_task("deploy", {"env": "prod"})
-        assert result["target_agent"] == "hermes"
+        assert result["target_adapter"] == ""
         assert result["task_type"] == "deploy"
 
     def test_route_analyze_to_hermes(self):
         sc = SystemConstraint()
         result = sc.route_task("analyze", {"target": "metrics"})
-        assert result["target_agent"] == "hermes"
+        assert result["target_adapter"] == ""
         assert result["task_type"] == "analyze"
 
     def test_route_with_spec_passthrough(self):
@@ -104,13 +107,13 @@ class TestTaskRouting:
 
     def test_route_with_requested_agent_match(self):
         sc = SystemConstraint()
-        result = sc.route_task("code", {}, requested_agent="claude")
-        assert result["target_agent"] == "claude"
+        result = sc.route_task("code", {}, requested_agent="claude-code")
+        assert result["target_adapter"] == "claude-code"
 
     def test_route_with_requested_agent_mismatch(self):
         sc = SystemConstraint()
         with pytest.raises(ConstraintViolation) as exc_info:
-            sc.route_task("code", {}, requested_agent="qwen")
+            sc.route_task("code", {}, requested_agent="qwen-code")
         assert "claude" in str(exc_info.value)
         assert "qwen" in str(exc_info.value)
 
@@ -124,7 +127,7 @@ class TestTaskRouting:
         sc = SystemConstraint()
         with pytest.raises(ConstraintViolation) as exc_info:
             sc.route_task("code", {}, requested_agent="unknown_agent")
-        assert "Unknown requested agent" in str(exc_info.value)
+        assert "must be routed to" in str(exc_info.value)
 
 
 # ───────────────────────────────────────────────────────────────
@@ -331,44 +334,60 @@ class TaskAgentMap:
     """任务到Agent映射测试"""
 
     def test_code_maps_to_claude(self):
-        assert TASK_AGENT_MAP[TaskType.CODE] == Agent.CLAUDE
+        code_task = REGISTRY.get_task_type("code")
+        assert code_task is not None
+        assert code_task.default_agent == "claude-code"
 
     def test_review_maps_to_codewhale(self):
-        assert TASK_AGENT_MAP[TaskType.REVIEW] == Agent.CODEWHALE
+        review_task = REGISTRY.get_task_type("review")
+        assert review_task is not None
+        assert review_task.default_agent == "codewhale"
 
     def test_test_maps_to_qwen(self):
-        assert TASK_AGENT_MAP[TaskType.TEST] == Agent.QWEN
+        test_task = REGISTRY.get_task_type("test")
+        assert test_task is not None
+        assert test_task.default_agent == "qwen-code"
 
     def test_doc_maps_to_qwen(self):
-        assert TASK_AGENT_MAP[TaskType.DOC] == Agent.QWEN
+        doc_task = REGISTRY.get_task_type("doc")
+        assert doc_task is not None
+        assert doc_task.default_agent == "qwen-code"
 
     def test_e2e_maps_to_qwen(self):
-        assert TASK_AGENT_MAP[TaskType.E2E] == Agent.QWEN
+        e2e_task = REGISTRY.get_task_type("e2e")
+        assert e2e_task is not None
+        assert e2e_task.default_agent == "qwen-code"
 
     def test_orchestrate_maps_to_hermes(self):
-        assert TASK_AGENT_MAP[TaskType.ORCHESTRATE] == Agent.HERMES
+        orchestrate_task = REGISTRY.get_task_type("orchestrate")
+        assert orchestrate_task is not None
+        assert orchestrate_task.default_agent == ""
 
     def test_deploy_maps_to_hermes(self):
-        assert TASK_AGENT_MAP[TaskType.DEPLOY] == Agent.HERMES
+        deploy_task = REGISTRY.get_task_type("deploy")
+        assert deploy_task is not None
+        assert deploy_task.default_agent == ""
 
     def test_analyze_maps_to_hermes(self):
-        assert TASK_AGENT_MAP[TaskType.ANALYZE] == Agent.HERMES
+        analyze_task = REGISTRY.get_task_type("analyze")
+        assert analyze_task is not None
+        assert analyze_task.default_agent == ""
 
     def test_claude_capabilities(self):
-        assert TaskType.CODE in AGENT_CAPABILITIES[Agent.CLAUDE]
+        assert "code" in ADAPTER_CAPABILITIES["claude-code"]
 
     def test_codewhale_capabilities(self):
-        assert TaskType.REVIEW in AGENT_CAPABILITIES[Agent.CODEWHALE]
+        assert "review" in ADAPTER_CAPABILITIES["codewhale"]
 
     def test_qwen_capabilities(self):
-        assert TaskType.TEST in AGENT_CAPABILITIES[Agent.QWEN]
-        assert TaskType.DOC in AGENT_CAPABILITIES[Agent.QWEN]
-        assert TaskType.E2E in AGENT_CAPABILITIES[Agent.QWEN]
+        assert "test" in ADAPTER_CAPABILITIES["qwen-code"]
+        assert "doc" in ADAPTER_CAPABILITIES["qwen-code"]
+        assert "e2e" in ADAPTER_CAPABILITIES["qwen-code"]
 
     def test_hermes_capabilities(self):
-        assert TaskType.ORCHESTRATE in AGENT_CAPABILITIES[Agent.HERMES]
-        assert TaskType.DEPLOY in AGENT_CAPABILITIES[Agent.HERMES]
-        assert TaskType.ANALYZE in AGENT_CAPABILITIES[Agent.HERMES]
+        assert "orchestrate" in ADAPTER_CAPABILITIES["hermes"]
+        assert "deploy" in ADAPTER_CAPABILITIES["hermes"]
+        assert "analyze" in ADAPTER_CAPABILITIES["hermes"]
 
 
 # ───────────────────────────────────────────────────────────────
@@ -379,42 +398,41 @@ class TestQueryMethods:
     """查询方法测试"""
 
     def test_get_agent_for_task_code(self):
-        assert get_task_agent("code") == "claude"
+        assert get_task_adapter("code") == "claude-code"
 
     def test_get_agent_for_task_review(self):
-        assert get_task_agent("review") == "codewhale"
+        assert get_task_adapter("review") == "codewhale"
 
     def test_get_agent_for_task_test(self):
-        assert get_task_agent("test") == "qwen"
+        assert get_task_adapter("test") == "qwen-code"
 
     def test_get_agent_for_task_unknown(self):
         assert get_task_agent("unknown") is None
 
     def test_get_allowed_tasks_for_claude(self):
         sc = SystemConstraint()
-        tasks = sc.get_allowed_tasks_for_agent("claude")
+        tasks = sc.get_allowed_tasks_for_adapter("claude-code")
         assert "code" in tasks
         assert "review" not in tasks
 
     def test_get_allowed_tasks_for_codewhale(self):
         sc = SystemConstraint()
-        tasks = sc.get_allowed_tasks_for_agent("codewhale")
+        tasks = sc.get_allowed_tasks_for_adapter("codewhale")
         assert "review" in tasks
         assert "code" not in tasks
 
     def test_get_allowed_tasks_for_qwen(self):
         sc = SystemConstraint()
-        tasks = sc.get_allowed_tasks_for_agent("qwen")
+        tasks = sc.get_allowed_tasks_for_adapter("qwen-code")
         assert "test" in tasks
         assert "doc" in tasks
         assert "e2e" in tasks
 
-    def test_get_allowed_tasks_for_hermes(self):
+    def test_hermes_not_in_adapter_capabilities(self):
+        """Hermes is not an adapter — it's the orchestrator, not in ADAPTER_CAPABILITIES"""
         sc = SystemConstraint()
-        tasks = sc.get_allowed_tasks_for_agent("hermes")
-        assert "orchestrate" in tasks
-        assert "deploy" in tasks
-        assert "analyze" in tasks
+        tasks = sc.get_allowed_tasks_for_adapter("hermes")
+        assert tasks == []  # Hermes 不是 CLI Adapter，没有能力映射
 
     def test_get_allowed_tasks_for_unknown(self):
         sc = SystemConstraint()
@@ -422,20 +440,20 @@ class TestQueryMethods:
 
     def test_can_agent_execute_true(self):
         sc = SystemConstraint()
-        assert sc.can_agent_execute("claude", "code") is True
-        assert sc.can_agent_execute("codewhale", "review") is True
-        assert sc.can_agent_execute("qwen", "test") is True
+        assert sc.can_adapter_execute("claude-code", "code") is True
+        assert sc.can_adapter_execute("codewhale", "review") is True
+        assert sc.can_adapter_execute("qwen-code", "test") is True
 
     def test_can_agent_execute_false(self):
         sc = SystemConstraint()
-        assert sc.can_agent_execute("claude", "review") is False
-        assert sc.can_agent_execute("codewhale", "code") is False
-        assert sc.can_agent_execute("qwen", "code") is False
+        assert sc.can_adapter_execute("claude-code", "review") is False
+        assert sc.can_adapter_execute("codewhale", "code") is False
+        assert sc.can_adapter_execute("qwen-code", "code") is False
 
     def test_can_agent_execute_unknown(self):
         sc = SystemConstraint()
         assert sc.can_agent_execute("unknown", "code") is False
-        assert sc.can_agent_execute("claude", "unknown") is False
+        assert sc.can_adapter_execute("claude-code", "unknown") is False
 
     def test_is_hermes_action_allowed_true(self):
         sc = SystemConstraint()
@@ -465,9 +483,9 @@ class TestBatchRouting:
         ]
         results = sc.route_batch(tasks)
         assert len(results) == 3
-        assert results[0]["target_agent"] == "claude"
-        assert results[1]["target_agent"] == "codewhale"
-        assert results[2]["target_agent"] == "qwen"
+        assert results[0]["target_adapter"] == "claude-code"
+        assert results[1]["target_adapter"] == "codewhale"
+        assert results[2]["target_adapter"] == "qwen-code"
 
     def test_route_batch_with_invalid_strict(self):
         sc = SystemConstraint(ConstraintConfig(strict_mode=True))
@@ -541,7 +559,7 @@ class TestEmergencyMode:
         sc.config.set_emergency_password("secret123")
         sc.activate_emergency("secret123", duration_seconds=60)
         result = sc.route_task("code", {}, bypass_check=True)
-        assert result["target_agent"] == "claude"
+        assert result["target_adapter"] == "claude-code"
 
 
 # ───────────────────────────────────────────────────────────────
@@ -570,7 +588,7 @@ class TestCallbacks:
     def test_route_callback(self):
         routes: List[tuple] = []
 
-        def on_route(tt: TaskType, agent: Agent, spec: Any) -> None:
+        def on_route(tt: str, agent: str, spec: Any) -> None:
             routes.append((tt, agent, spec))
 
         config = ConstraintConfig(route_callbacks=[on_route])
@@ -578,8 +596,8 @@ class TestCallbacks:
         sc.route_task("code", {"feature_id": "F001"})
 
         assert len(routes) == 1
-        assert routes[0][0] == TaskType.CODE
-        assert routes[0][1] == Agent.CLAUDE
+        assert routes[0][0] == "code"
+        assert routes[0][1] == "claude-code"
         assert routes[0][2] == {"feature_id": "F001"}
 
     def test_multiple_violation_callbacks(self):
@@ -630,14 +648,14 @@ class TestConstraintViolation:
             "test message",
             task_type="code",
             attempted_agent="hermes",
-            required_agent="claude",
+            required_agent="claude-code",
             action="route_task",
         )
         d = exc.to_dict()
         assert d["message"] == "test message"
         assert d["task_type"] == "code"
         assert d["attempted_agent"] == "hermes"
-        assert d["required_agent"] == "claude"
+        assert d["required_agent"] == "claude-code"
         assert d["action"] == "route_task"
 
     def test_hermes_permission_denied_is_constraint_violation(self):
@@ -649,10 +667,10 @@ class TestConstraintViolation:
             "denied",
             task_type="code",
             attempted_agent="hermes",
-            required_agent="claude",
+            required_agent="claude-code",
         )
         assert exc.task_type == "code"
-        assert exc.required_agent == "claude"
+        assert exc.required_agent == "claude-code"
 
 
 # ───────────────────────────────────────────────────────────────
@@ -663,13 +681,13 @@ class TestGlobalFunctions:
     """全局便捷函数测试"""
 
     def test_get_task_agent_code(self):
-        assert get_task_agent("code") == "claude"
+        assert get_task_adapter("code") == "claude-code"
 
     def test_get_task_agent_review(self):
-        assert get_task_agent("review") == "codewhale"
+        assert get_task_adapter("review") == "codewhale"
 
     def test_get_task_agent_test(self):
-        assert get_task_agent("test") == "qwen"
+        assert get_task_adapter("test") == "qwen-code"
 
     def test_get_task_agent_unknown(self):
         assert get_task_agent("unknown") is None
@@ -689,7 +707,7 @@ class TestGlobalFunctions:
 
     def test_route_task_global(self):
         result = route_task("code", {"feature_id": "F001"})
-        assert result["target_agent"] == "claude"
+        assert result["target_adapter"] == "claude-code"
 
 
 # ───────────────────────────────────────────────────────────────
@@ -767,18 +785,18 @@ class TestIntegrationScenarios:
             ("test", {"suite": "unit", "files": ["test_system_constraint.py"]}),
             ("orchestrate", {"pipeline": "wave5", "phase": "develop"}),
         ]
-        expected_agents = ["claude", "codewhale", "qwen", "hermes"]
-        for (task_type, spec), expected in zip(pipeline_tasks, expected_agents):
+        expected_adapters = ["claude-code", "codewhale", "qwen-code", ""]
+        for (task_type, spec), expected in zip(pipeline_tasks, expected_adapters):
             result = sc.route_task(task_type, spec)
-            assert result["target_agent"] == expected
+            assert result["target_adapter"] == expected
 
     def test_hermes_attempts_code_intercepted(self):
         """Hermes 尝试编码被自动拦截 — 验收标准 3"""
         sc = SystemConstraint()
         # 路由层面：Hermes 不能路由 code 任务给自己
         result = sc.route_task("code", {"feature_id": "F024"})
-        assert result["target_agent"] == "claude"
-        assert result["target_agent"] != "hermes"
+        assert result["target_adapter"] == "claude-code"
+        assert result["target_adapter"] != "hermes"
         # 权限层面：Hermes 尝试执行 code 操作被拦截
         with pytest.raises(HermesPermissionDenied) as exc_info:
             sc.hermes_only_orchestration("code")
@@ -823,25 +841,35 @@ class TestIntegrationScenarios:
                 sc.hermes_only_orchestration(action)
         assert sc.violation_count == len(forbidden_actions)
 
-    def test_task_type_enum_coverage(self):
+    def test_task_type_coverage(self):
         """所有任务类型都有映射"""
-        for task_type in TaskType:
-            agent = TASK_AGENT_MAP.get(task_type)
-            assert agent is not None, f"TaskType {task_type} has no agent mapping"
+        for task_type_name in REGISTRY.list_task_types():
+            task_type = REGISTRY.get_task_type(task_type_name)
+            assert task_type is not None, f"Task type {task_type_name} has no definition in REGISTRY"
+            # The default_agent can be an empty string for hermes-only tasks
+            # So we just verify the task type exists in the registry
 
     def test_agent_capabilities_coverage(self):
         """所有 Agent 都有能力定义"""
-        for agent in Agent:
-            caps = AGENT_CAPABILITIES.get(agent)
+        for agent in ["claude-code", "codewhale", "qwen-code"]:
+            caps = ADAPTER_CAPABILITIES.get(agent)
             assert caps is not None, f"Agent {agent} has no capabilities"
             assert len(caps) > 0, f"Agent {agent} has empty capabilities"
 
     def test_no_overlapping_exclusive_tasks(self):
         """专属任务不重叠：code 只给 claude，review 只给 codewhale"""
-        assert TASK_AGENT_MAP[TaskType.CODE] == Agent.CLAUDE
-        assert TASK_AGENT_MAP[TaskType.REVIEW] == Agent.CODEWHALE
-        assert Agent.CLAUDE not in [TASK_AGENT_MAP[TaskType.REVIEW], TASK_AGENT_MAP[TaskType.TEST]]
-        assert Agent.CODEWHALE not in [TASK_AGENT_MAP[TaskType.CODE], TASK_AGENT_MAP[TaskType.TEST]]
+        code_task = REGISTRY.get_task_type("code")
+        review_task = REGISTRY.get_task_type("review")
+        test_task = REGISTRY.get_task_type("test")
+        
+        assert code_task is not None
+        assert review_task is not None
+        assert test_task is not None
+        
+        assert code_task.default_agent == "claude-code"
+        assert review_task.default_agent == "codewhale"
+        assert "claude-code" not in [review_task.default_agent, test_task.default_agent]
+        assert "codewhale" not in [code_task.default_agent, test_task.default_agent]
 
     def test_hermes_can_only_orchestrate(self):
         """Hermes 只能执行编排类任务"""

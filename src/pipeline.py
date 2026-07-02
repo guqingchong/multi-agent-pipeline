@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""pipeline.py — 最简版状态机，支持 init / develop / check / advance / resume 命令。
+"""pipeline.py — Minimal state machine supporting init / develop / check / advance / resume commands.
 
-Phase 0-3 流转:
-  Phase 0: init       → 创建项目骨架
-  Phase 1: develop    → 开发模式（需 check 通过）
-  Phase 2: review     → 审查阶段（需 check 通过）
-  Phase 3: test       → 测试阶段（需 check 通过）
+Phase 0-3 flow:
+  Phase 0: init       → Create project skeleton
+  Phase 1: develop    → Development mode (requires check pass)
+  Phase 2: review     → Review phase (requires check pass)
+  Phase 3: test       → Test phase (requires check pass)
 
-每个 advance 必须通过 check 函数，否则 BLOCK。
-支持 resume 从 checkpoint 恢复（F008）。
+Each advance must pass the check function, otherwise BLOCKED.
+Supports resume from checkpoint (F008).
 """
 
 from __future__ import annotations
@@ -16,11 +16,28 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
-from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+try:
+    from models import (
+        PipelineError, PhaseBlockedError, ProjectNotFoundError,
+        CheckpointNotFoundError, ApprovalRequiredError,
+        Phase, ProjectState, PHASE_NAMES,
+    )
+except ModuleNotFoundError:
+    from src.models import (
+        PipelineError, PhaseBlockedError, ProjectNotFoundError,
+        CheckpointNotFoundError, ApprovalRequiredError,
+        Phase, ProjectState, PHASE_NAMES,
+    )
+
+try:
+    from config import get_config
+except (ModuleNotFoundError, ImportError):
+    from src.config import get_config
 
 try:
     from state_store import StateStore, CheckpointRecord
@@ -77,173 +94,70 @@ except ModuleNotFoundError:
 
 
 # ───────────────────────────────────────────────────────────────
-# 常量 / 配置
+# Constants / Config
 # ───────────────────────────────────────────────────────────────
 
-PHASE_NAMES = ["init", "design", "decompose", "develop", "test", "accept", "deploy"]
-DB_FILENAME = "pipeline_state.db"
-
-
-# ───────────────────────────────────────────────────────────────
-# 状态机核心
-# ───────────────────────────────────────────────────────────────
-
-class Phase(Enum):
-    INIT = 0
-    DESIGN = 1
-    DECOMPOSE = 2
-    DEVELOP = 3
-    TEST = 4
-    ACCEPT = 5
-    DEPLOY = 6
-    # 向后兼容别名（F005 旧版使用 REVIEW）
-    REVIEW = 7
-
-    def __str__(self) -> str:
-        # 兼容旧版：REVIEW 显示为 "review"
-        if self.name == "REVIEW":
-            return "review"
-        return PHASE_NAMES[self.value]
-
-    @classmethod
-    def from_name(cls, name: str) -> Phase:
-        try:
-            return cls(PHASE_NAMES.index(name.lower()))
-        except ValueError:
-            # 兼容旧版名称
-            if name.lower() == "review":
-                return cls.REVIEW
-            raise ValueError(f"Unknown phase: {name}")
-
-    def next(self) -> Optional[Phase]:
-        # 兼容旧版 F005 测试：init->develop->review->test
-        if self.name == "INIT":
-            return Phase.DEVELOP
-        if self.name == "DEVELOP":
-            return Phase.REVIEW
-        if self.name == "REVIEW":
-            return Phase.TEST
-        return None
-
-    def prev(self) -> Optional[Phase]:
-        # 兼容旧版 F005 测试
-        if self.name == "TEST":
-            return Phase.REVIEW
-        if self.name == "REVIEW":
-            return Phase.DEVELOP
-        if self.name == "DEVELOP":
-            return Phase.INIT
-        return None
-
-
-@dataclass
-class ProjectState:
-    """项目状态快照"""
-    name: str
-    phase: Phase
-    description: str = ""
-    stack: str = ""
-    created: bool = False
-    git_init: bool = False
-    metadata_files: List[str] = field(default_factory=list)
-    db_created: bool = False
-    check_results: Dict[str, bool] = field(default_factory=dict)
-    # Phase 0-6 扩展字段
-    design_approved: bool = False
-    accept_approved: bool = False
-    tests_passed: bool = False
-
-    def to_dict(self) -> dict:
-        return {
-            "name": self.name,
-            "phase": str(self.phase),
-            "description": self.description,
-            "stack": self.stack,
-            "created": self.created,
-            "git_init": self.git_init,
-            "metadata_files": self.metadata_files,
-            "db_created": self.db_created,
-            "check_results": self.check_results,
-            "design_approved": self.design_approved,
-            "accept_approved": self.accept_approved,
-            "tests_passed": self.tests_passed,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> ProjectState:
-        return cls(
-            name=data["name"],
-            phase=Phase.from_name(data["phase"]),
-            description=data.get("description", ""),
-            stack=data.get("stack", ""),
-            created=data.get("created", False),
-            git_init=data.get("git_init", False),
-            metadata_files=data.get("metadata_files", []),
-            db_created=data.get("db_created", False),
-            check_results=data.get("check_results", {}),
-            design_approved=data.get("design_approved", False),
-            accept_approved=data.get("accept_approved", False),
-            tests_passed=data.get("tests_passed", False),
-        )
+DB_FILENAME = get_config().db_name
 
 
 # ───────────────────────────────────────────────────────────────
-# Check 函数注册表
+# Check function registry
 # ───────────────────────────────────────────────────────────────
 
-# 旧版 CheckFunc 保留兼容，但新版 check 函数已迁移到 phase_checks.py
-# 这里保留对旧版 check_init / check_develop / check_test 的引用以兼容已有测试
+# Legacy CheckFunc kept for compatibility; new check functions moved to phase_checks.py
+# Keep references to legacy check_init / check_develop / check_test for existing tests
 
 CheckFunc = Callable[[ProjectState], Tuple[bool, str]]
 
-# 为了兼容旧测试，保留旧版 check 函数签名
-# 新版 phase_checks.py 使用 (project_name, base_dir) 签名
+# Legacy check functions (compatible with old tests)
+# New phase_checks.py uses (project_name, base_dir) signature
+
 
 def check_init(state: ProjectState) -> Tuple[bool, str]:
-    """兼容旧版：Phase 0 → Phase 1 检查"""
+    """Legacy compatibility: Phase 0 → Phase 1 check."""
     errors: List[str] = []
     if not state.created:
-        errors.append("项目目录未创建")
+        errors.append("Project directory not created")
     if not state.git_init:
-        errors.append("git repo 未初始化")
+        errors.append("Git repo not initialized")
     if not state.db_created:
-        errors.append("SQLite DB 未创建")
+        errors.append("SQLite DB not created")
     required_files = ["SOUL.md", "AGENTS.md", "progress.md", "features.json"]
     missing = [f for f in required_files if f not in state.metadata_files]
     if missing:
-        errors.append(f"缺少元数据文件: {', '.join(missing)}")
+        errors.append(f"Missing metadata files: {', '.join(missing)}")
     if errors:
         return False, " | ".join(errors)
     return True, "PASS"
 
 
 def check_develop(state: ProjectState) -> Tuple[bool, str]:
-    """兼容旧版：Phase 1 -> Phase 2 检查"""
+    """Legacy compatibility: Phase 1 -> Phase 2 check."""
     if not state.check_results.get("develop_started", False):
-        return False, "开发尚未开始（develop_started=false）"
+        return False, "Development not started (develop_started=false)"
     if not state.check_results.get("code_written", False):
-        return False, "没有可审查的代码（code_written=false）"
+        return False, "No code to review (code_written=false)"
     return True, "PASS"
 
 
 def check_review(state: ProjectState) -> Tuple[bool, str]:
-    """兼容旧版：Phase 2 → Phase 3 检查"""
+    """Legacy compatibility: Phase 2 → Phase 3 check."""
     if not state.check_results.get("code_written", False):
-        return False, "没有可审查的代码（code_written=false）"
+        return False, "No code to review (code_written=false)"
     if not state.check_results.get("tests_passed", False):
-        return False, "测试未通过（tests_passed=false）"
+        return False, "Tests not passed (tests_passed=false)"
     return True, "PASS"
 
 
 def check_test(state: ProjectState) -> Tuple[bool, str]:
-    """兼容旧版：Phase 3 → （完成）检查"""
+    """Legacy compatibility: Phase 3 → (complete) check."""
     if not state.check_results.get("tests_passed", False):
-        return False, "测试未通过（tests_passed=false）"
+        return False, "Tests not passed (tests_passed=false)"
     return True, "PASS"
 
 
 # ───────────────────────────────────────────────────────────────
-# 辅助函数
+# Helper functions
 # ───────────────────────────────────────────────────────────────
 
 def _get_db_path(base_dir: Path) -> Path:
@@ -255,7 +169,7 @@ def _get_store(base_dir: Path) -> StateStore:
 
 
 def _write_checkpoint(store: StateStore, project_name: str, state: ProjectState, action: str) -> int:
-    """每个有意义 action 后写入 checkpoint"""
+    """Write a checkpoint after every meaningful action."""
     return store.write_checkpoint(
         project_id=project_name,
         phase=str(state.phase),
@@ -267,14 +181,14 @@ def _write_checkpoint(store: StateStore, project_name: str, state: ProjectState,
 
 
 def _save_state(store: StateStore, project_name: str, state: ProjectState, action: str) -> None:
-    """保存状态到 legacy 表 + 写入 checkpoint"""
+    """Save state to legacy table + write checkpoint."""
     store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
     store.update_project_phase(project_name, str(state.phase))
     _write_checkpoint(store, project_name, state, action)
 
 
 def _load_state(store: StateStore, project_name: str) -> Optional[ProjectState]:
-    """从 legacy 表加载状态"""
+    """Load state from legacy table."""
     raw = store.legacy_load("state")
     if raw is None:
         return None
@@ -282,11 +196,11 @@ def _load_state(store: StateStore, project_name: str) -> Optional[ProjectState]:
 
 
 # ───────────────────────────────────────────────────────────────
-# 命令实现
+# Command implementations
 # ───────────────────────────────────────────────────────────────
 
 def cmd_init(args: argparse.Namespace) -> int:
-    """创建项目骨架"""
+    """Create project skeleton."""
     project_name: str = args.project
     description: str = args.description or ""
     stack: str = args.stack or ""
@@ -294,7 +208,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     base_dir = Path.cwd()
     proj_dir = base_dir / project_name
     if proj_dir.exists() and not args.force:
-        print(f"[ERROR] 项目目录已存在: {proj_dir}")
+        print(f"[ERROR] Project directory already exists: {proj_dir}")
         return 1
 
     proj_dir.mkdir(parents=True, exist_ok=True)
@@ -303,24 +217,25 @@ def cmd_init(args: argparse.Namespace) -> int:
     (proj_dir / "specs").mkdir(exist_ok=True)
     (proj_dir / ".logs").mkdir(exist_ok=True)
 
-    # 创建元数据文件
+    # Create metadata files
     metadata_files = []
     for filename, content in [
-        ("SOUL.md", f"# SOUL.md\n\n项目: {project_name}\n描述: {description}\n技术栈: {stack}\n"),
-        ("AGENTS.md", "# AGENTS.md\n\n## 协作规则\n\n（待填充）\n"),
-        ("progress.md", f"# progress.md\n\n项目: {project_name}\n当前 Phase: init\n"),
+        ("SOUL.md", f"# SOUL.md\n\nProject: {project_name}\nDescription: {description}\nStack: {stack}\n"),
+        ("AGENTS.md", "# AGENTS.md\n\n## Collaboration Rules\n\n(TBD)\n"),
+        ("progress.md", f"# progress.md\n\nProject: {project_name}\nCurrent Phase: init\n"),
         ("features.json", json.dumps({"project": project_name, "features": []}, indent=2)),
     ]:
         filepath = proj_dir / filename
         filepath.write_text(content, encoding="utf-8")
         metadata_files.append(filename)
 
-    # 初始化 git
+    # Initialize git
     git_init = False
-    if os.system(f"cd {proj_dir} && git init -q") == 0:
+    result = subprocess.run(["git", "init", "-q"], cwd=str(proj_dir), capture_output=True)
+    if result.returncode == 0:
         git_init = True
 
-    # 初始化 SQLite（Layer 2 + 向后兼容）
+    # Initialize SQLite (Layer 2 + backward compatibility)
     store = _get_store(proj_dir)
     state = ProjectState(
         name=project_name,
@@ -335,52 +250,52 @@ def cmd_init(args: argparse.Namespace) -> int:
     _save_state(store, project_name, state, "init")
     store.create_project(project_id=project_name, name=project_name, current_phase="init")
 
-    print(f"[OK] 项目 '{project_name}' 初始化完成")
-    print(f"     目录: {base_dir}")
+    print(f"[OK] Project '{project_name}' initialized")
+    print(f"     Directory: {base_dir}")
     print(f"     Phase: {state.phase}")
-    print(f"     元数据文件: {', '.join(metadata_files)}")
-    print(f"     Git: {'已初始化' if git_init else '初始化失败'}")
+    print(f"     Metadata files: {', '.join(metadata_files)}")
+    print(f"     Git: {'initialized' if git_init else 'init failed'}")
     print(f"     DB: {store.db_path}")
     return 0
 
 
 def cmd_develop(args: argparse.Namespace) -> int:
-    """进入开发模式（将 phase 推进到 develop，需先通过 check）"""
+    """Enter development mode (advance phase to develop, requires check)."""
     project_name: str = args.project
     base_dir = Path.cwd()
     proj_dir = base_dir / project_name
     store = _get_store(proj_dir)
     state = _load_state(store, project_name)
     if state is None:
-        print(f"[ERROR] 项目不存在: {project_name}")
+        print(f"[ERROR] Project does not exist: {project_name}")
         return 1
 
-    # develop 命令本身需要 check_init 通过
+    # develop command requires check_init to pass
     passed, msg = check_init(state)
     if not passed:
-        print(f"[BLOCKED] 无法进入 develop: {msg}")
+        print(f"[BLOCKED] Cannot enter develop: {msg}")
         return 1
 
     if state.phase.value >= Phase.DEVELOP.value:
-        print(f"[OK] 已在 {state.phase} 阶段，无需推进")
+        print(f"[OK] Already in {state.phase} phase, no need to advance")
         return 0
 
-    # 新版 Phase 0-6 中，从 init 到 develop 需要经过 design 和 decompose
-    # 但为了兼容旧测试，直接推进到 develop（旧版 INIT->DEVELOP 直接推进）
+    # In new Phase 0-6, init->develop goes through design and decompose
+    # For compatibility with old tests, directly advance to develop (legacy INIT->DEVELOP)
     state.phase = Phase.DEVELOP
     state.check_results["develop_started"] = True
     _save_state(store, project_name, state, "develop")
 
-    print(f"[OK] 进入 develop 阶段: {project_name}")
+    print(f"[OK] Entered develop phase: {project_name}")
     return 0
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    """检查当前 phase 是否满足 advance 条件（新版优先使用 phase_checks.py）"""
+    """Check whether current phase meets advance conditions (prefer phase_checks.py)."""
     project_name: str = args.project
     base_dir = Path.cwd()
 
-    # 优先使用新版 phase_checks
+    # Prefer new phase_checks
     passed, msg = phase_check(project_name, base_dir)
     status = "PASS" if passed else "FAIL"
     print(f"[{status}] check: {msg}")
@@ -388,22 +303,23 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def cmd_advance(args: argparse.Namespace) -> int:
-    """推进到下一 phase（自动执行 check，未通过则 BLOCK）"""
+    """Advance to next phase (auto check, BLOCK if not passed)."""
     project_name: str = args.project
     base_dir = Path.cwd()
     proj_dir = base_dir / project_name
 
-    # 先尝试新版 phase_advance
+    # Try new phase_advance first
+    msg = "Advance failed"
     try:
         passed, msg = phase_advance(project_name, base_dir)
         if passed:
             print(f"[OK] {msg}")
             return 0
     except ValueError:
-        # 新版 PHASE_ORDER 不包含 review 等旧版 phase，回退到旧版逻辑
+        # New PHASE_ORDER does not include review etc., fall back to legacy logic
         pass
 
-    # 新版 check 失败或不可用时，回退到旧版检查逻辑（兼容旧测试）
+    # Fallback to legacy check logic (compatible with old tests)
     store = _get_store(proj_dir)
     state = _load_state(store, project_name)
     if state is None:
@@ -412,10 +328,10 @@ def cmd_advance(args: argparse.Namespace) -> int:
 
     next_phase = state.phase.next()
     if next_phase is None:
-        print(f"[OK] 已在最终阶段 {state.phase}，无需推进")
+        print(f"[OK] Already in final phase {state.phase}, no need to advance")
         return 0
 
-    # 旧版 check 映射
+    # Legacy check mapping
     old_check_map = {
         Phase.INIT: check_init,
         Phase.DEVELOP: check_develop,
@@ -426,9 +342,10 @@ def cmd_advance(args: argparse.Namespace) -> int:
     if old_check is not None:
         old_passed, old_msg = old_check(state)
         if old_passed:
+            original_phase = state.phase
             state.phase = next_phase
             _save_state(store, project_name, state, f"advance:{state.phase.name.lower()}")
-            print(f"[OK] 从 {state.phase.prev()} 推进到 {next_phase}")
+            print(f"[OK] Advanced from {original_phase} to {next_phase}")
             return 0
         else:
             print(f"[BLOCKED] {old_msg}")
@@ -439,107 +356,107 @@ def cmd_advance(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    """查看项目状态"""
+    """Show project status."""
     project_name: str = args.project
     base_dir = Path.cwd()
     proj_dir = base_dir / project_name
     store = _get_store(proj_dir)
     state = _load_state(store, project_name)
     if state is None:
-        print(f"[ERROR] 项目不存在: {project_name}")
+        print(f"[ERROR] Project does not exist: {project_name}")
         return 1
     print(json.dumps(state.to_dict(), indent=2, ensure_ascii=False))
     return 0
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    """从 checkpoint 恢复项目状态"""
+    """Resume project state from checkpoint."""
     project_name: str = args.project
     checkpoint_id: Optional[int] = getattr(args, "checkpoint_id", None)
 
     base_dir = Path.cwd()
     proj_dir = base_dir / project_name
     if not proj_dir.exists():
-        print(f"[ERROR] 项目目录不存在: {proj_dir}")
+        print(f"[ERROR] Project directory does not exist: {proj_dir}")
         return 1
 
     db_path = _get_db_path(proj_dir)
     if not db_path.exists():
-        print(f"[ERROR] 数据库不存在: {db_path}")
+        print(f"[ERROR] Database does not exist: {db_path}")
         return 1
 
     store = _get_store(proj_dir)
 
-    # 1. 获取 checkpoint
+    # 1. Get checkpoint
     if checkpoint_id is not None:
         cp = store.get_checkpoint(checkpoint_id)
         if cp is None:
-            print(f"[ERROR] checkpoint {checkpoint_id} 不存在")
+            print(f"[ERROR] checkpoint {checkpoint_id} does not exist")
             return 1
     else:
         cp = store.get_latest_checkpoint(project_name)
         if cp is None:
-            print(f"[ERROR] 项目没有 checkpoint，无法恢复")
+            print(f"[ERROR] Project has no checkpoint, cannot resume")
             return 1
 
-    # 2. 恢复状态
+    # 2. Restore state
     state_dict = store.restore_checkpoint(cp.id)
     if state_dict is None:
-        print(f"[ERROR] checkpoint {cp.id} 状态为空")
+        print(f"[ERROR] checkpoint {cp.id} state is empty")
         return 1
 
     state = ProjectState.from_dict(state_dict)
 
-    # 3. 写回 legacy 表
+    # 3. Write back to legacy table
     store.legacy_save("state", json.dumps(state_dict, ensure_ascii=False))
     store.update_project_phase(project_name, str(state.phase))
 
-    # 4. 写入恢复标记 checkpoint
+    # 4. Write resume marker checkpoint
     _write_checkpoint(store, project_name, state, "resume")
 
-    print(f"[OK] 项目 '{project_name}' 从 checkpoint {cp.id} 恢复成功")
-    print(f"     恢复 Phase: {state.phase}")
-    print(f"     恢复时间: {cp.created_at}")
+    print(f"[OK] Project '{project_name}' resumed from checkpoint {cp.id}")
+    print(f"     Restored Phase: {state.phase}")
+    print(f"     Restored at: {cp.created_at}")
     return 0
 
 
 def cmd_rollback(args: argparse.Namespace) -> int:
-    """回滚到指定 checkpoint"""
+    """Rollback to a specific checkpoint."""
     project_name: str = args.project
     checkpoint_id: int = args.checkpoint_id
 
     base_dir = Path.cwd()
     proj_dir = base_dir / project_name
     if not proj_dir.exists():
-        print(f"[ERROR] 项目目录不存在: {proj_dir}")
+        print(f"[ERROR] Project directory does not exist: {proj_dir}")
         return 1
 
     db_path = _get_db_path(proj_dir)
     if not db_path.exists():
-        print(f"[ERROR] 数据库不存在: {db_path}")
+        print(f"[ERROR] Database does not exist: {db_path}")
         return 1
 
     store = _get_store(proj_dir)
     state_dict = store.rollback(project_name, checkpoint_id)
     if state_dict is None:
-        print(f"[ERROR] checkpoint {checkpoint_id} 不存在或回滚失败")
+        print(f"[ERROR] checkpoint {checkpoint_id} does not exist or rollback failed")
         return 1
 
     state = ProjectState.from_dict(state_dict)
     store.legacy_save("state", json.dumps(state_dict, ensure_ascii=False))
     _write_checkpoint(store, project_name, state, "rollback")
 
-    print(f"[OK] 项目 '{project_name}' 回滚到 checkpoint {checkpoint_id} 成功")
-    print(f"     回滚后 Phase: {state.phase}")
+    print(f"[OK] Project '{project_name}' rolled back to checkpoint {checkpoint_id}")
+    print(f"     Phase after rollback: {state.phase}")
     return 0
 
 
 # ───────────────────────────────────────────────────────────────
-# Phase 0-6 新增命令
+# Phase 0-6 new commands
 # ───────────────────────────────────────────────────────────────
 
 def cmd_rollback_phase(args: argparse.Namespace) -> int:
-    """回退到指定 phase（需人工审批）"""
+    """Rollback to a specific phase (requires approval)."""
     project_name: str = args.project
     target_phase: str = args.to
     approved: bool = args.approved
@@ -547,12 +464,12 @@ def cmd_rollback_phase(args: argparse.Namespace) -> int:
     base_dir = Path.cwd()
     proj_dir = base_dir / project_name
     if not proj_dir.exists():
-        print(f"[ERROR] 项目目录不存在: {proj_dir}")
+        print(f"[ERROR] Project directory does not exist: {proj_dir}")
         return 1
 
     passed, msg = phase_rollback(project_name, base_dir, target_phase, approved=approved)
     if not passed:
-        if "审批" in msg or "approved" in msg.lower():
+        if "approval" in msg.lower() or "approved" in msg.lower():
             print(f"[BLOCKED] {msg}")
         else:
             print(f"[ERROR] {msg}")
@@ -563,14 +480,14 @@ def cmd_rollback_phase(args: argparse.Namespace) -> int:
 
 
 def cmd_approve(args: argparse.Namespace) -> int:
-    """人工审批指定 phase"""
+    """Manual approval for a specific phase."""
     project_name: str = args.project
     phase: str = args.phase
 
     base_dir = Path.cwd()
     proj_dir = base_dir / project_name
     if not proj_dir.exists():
-        print(f"[ERROR] 项目目录不存在: {proj_dir}")
+        print(f"[ERROR] Project directory does not exist: {proj_dir}")
         return 1
 
     if phase == "design":
@@ -578,7 +495,7 @@ def cmd_approve(args: argparse.Namespace) -> int:
     elif phase == "accept":
         passed, msg = phase_approve_accept(project_name, base_dir)
     else:
-        print(f"[ERROR] 未知审批 phase: {phase}")
+        print(f"[ERROR] Unknown approval phase: {phase}")
         return 1
 
     if not passed:
@@ -590,14 +507,14 @@ def cmd_approve(args: argparse.Namespace) -> int:
 
 
 def cmd_mark_tests(args: argparse.Namespace) -> int:
-    """标记端到端测试状态"""
+    """Mark end-to-end test status."""
     project_name: str = args.project
     passed: bool = args.passed
 
     base_dir = Path.cwd()
     proj_dir = base_dir / project_name
     if not proj_dir.exists():
-        print(f"[ERROR] 项目目录不存在: {proj_dir}")
+        print(f"[ERROR] Project directory does not exist: {proj_dir}")
         return 1
 
     ok, msg = phase_mark_tests(project_name, base_dir, passed=passed)
@@ -610,65 +527,65 @@ def cmd_mark_tests(args: argparse.Namespace) -> int:
 
 
 # ───────────────────────────────────────────────────────────────
-# CLI 入口
+# CLI entry
 # ───────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pipeline.py",
-        description="pipeline 状态机 — Phase 0-6 完整流转 + SQLite 持久化",
+        description="Pipeline state machine — Phase 0-6 full flow + SQLite persistence",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     # init
-    p_init = sub.add_parser("init", help="创建项目骨架")
-    p_init.add_argument("project", help="项目名")
-    p_init.add_argument("--description", default="", help="项目描述")
-    p_init.add_argument("--stack", default="", help="技术栈")
-    p_init.add_argument("--force", action="store_true", help="强制覆盖已存在目录")
+    p_init = sub.add_parser("init", help="Create project skeleton")
+    p_init.add_argument("project", help="Project name")
+    p_init.add_argument("--description", default="", help="Project description")
+    p_init.add_argument("--stack", default="", help="Tech stack")
+    p_init.add_argument("--force", action="store_true", help="Force overwrite existing directory")
 
     # develop
-    p_dev = sub.add_parser("develop", help="进入开发模式")
-    p_dev.add_argument("project", help="项目名")
+    p_dev = sub.add_parser("develop", help="Enter development mode")
+    p_dev.add_argument("project", help="Project name")
 
     # check
-    p_check = sub.add_parser("check", help="检查当前 phase 条件")
-    p_check.add_argument("project", help="项目名")
+    p_check = sub.add_parser("check", help="Check current phase conditions")
+    p_check.add_argument("project", help="Project name")
 
     # advance
-    p_adv = sub.add_parser("advance", help="推进到下一 phase")
-    p_adv.add_argument("project", help="项目名")
+    p_adv = sub.add_parser("advance", help="Advance to next phase")
+    p_adv.add_argument("project", help="Project name")
 
     # status
-    p_status = sub.add_parser("status", help="查看项目状态")
-    p_status.add_argument("project", help="项目名")
+    p_status = sub.add_parser("status", help="Show project status")
+    p_status.add_argument("project", help="Project name")
 
     # resume (F008)
-    p_resume = sub.add_parser("resume", help="从 checkpoint 恢复项目")
-    p_resume.add_argument("project", help="项目名")
-    p_resume.add_argument("--checkpoint-id", type=int, default=None, help="指定 checkpoint ID（默认最新）")
+    p_resume = sub.add_parser("resume", help="Resume project from checkpoint")
+    p_resume.add_argument("project", help="Project name")
+    p_resume.add_argument("--checkpoint-id", type=int, default=None, help="Checkpoint ID (default: latest)")
 
     # rollback (F008)
-    p_rollback = sub.add_parser("rollback", help="回滚到指定 checkpoint")
-    p_rollback.add_argument("project", help="项目名")
-    p_rollback.add_argument("--checkpoint-id", type=int, required=True, help="checkpoint ID")
+    p_rollback = sub.add_parser("rollback", help="Rollback to specific checkpoint")
+    p_rollback.add_argument("project", help="Project name")
+    p_rollback.add_argument("--checkpoint-id", type=int, required=True, help="Checkpoint ID")
 
     # rollback-phase (F013)
-    p_rollback_phase = sub.add_parser("rollback-phase", help="回退到指定 phase（需人工审批）")
-    p_rollback_phase.add_argument("project", help="项目名")
-    p_rollback_phase.add_argument("--to", required=True, choices=PHASE_NAMES, help="目标 phase")
-    p_rollback_phase.add_argument("--approved", action="store_true", help="确认已人工审批")
+    p_rollback_phase = sub.add_parser("rollback-phase", help="Rollback to a specific phase (requires approval)")
+    p_rollback_phase.add_argument("project", help="Project name")
+    p_rollback_phase.add_argument("--to", required=True, choices=PHASE_NAMES, help="Target phase")
+    p_rollback_phase.add_argument("--approved", action="store_true", help="Confirm manual approval")
 
     # approve (F013)
-    p_approve = sub.add_parser("approve", help="人工审批指定 phase")
-    p_approve.add_argument("project", help="项目名")
-    p_approve.add_argument("--phase", required=True, choices=["design", "accept"], help="要审批的 phase")
+    p_approve = sub.add_parser("approve", help="Manual approval for a specific phase")
+    p_approve.add_argument("project", help="Project name")
+    p_approve.add_argument("--phase", required=True, choices=["design", "accept"], help="Phase to approve")
 
     # mark-tests (F013)
-    p_mark_tests = sub.add_parser("mark-tests", help="标记端到端测试状态")
-    p_mark_tests.add_argument("project", help="项目名")
-    p_mark_tests.add_argument("--passed", action="store_true", help="标记为通过")
-    p_mark_tests.add_argument("--failed", action="store_true", help="标记为未通过")
+    p_mark_tests = sub.add_parser("mark-tests", help="Mark end-to-end test status")
+    p_mark_tests.add_argument("project", help="Project name")
+    p_mark_tests.add_argument("--passed", action="store_true", help="Mark as passed")
+    p_mark_tests.add_argument("--failed", action="store_true", help="Mark as failed")
 
     return parser
 
@@ -677,7 +594,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    # 处理 mark-tests 的 passed/failed 互斥逻辑
+    # Handle mark-tests passed/failed mutual exclusion
     if getattr(args, "failed", False):
         args.passed = False
 
@@ -696,7 +613,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     handler = handlers.get(args.command)
     if handler is None:
-        print(f"[ERROR] 未知命令: {args.command}")
+        print(f"[ERROR] Unknown command: {args.command}")
         return 1
 
     return handler(args)

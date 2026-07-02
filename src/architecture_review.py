@@ -40,16 +40,16 @@ REVIEW_RESULT = ArchitectureReview(
     
     key_challenges=[
         # 1. 硬约束实现
-        "硬约束'Hermes不能编码/测试/审核'需要运行时强制拦截，但当前sandbox.py仅做命令白名单，未针对特定Agent角色做行为限制。",
+        "硬约束'Hermes不能编码/测试/审核'需要运行时强制拦截，但当前sandbox.py仅做命令白名单，未针对特定Agent角色做Behavior限制。",
         "约束绕过风险：Agent可通过多轮对话逐步诱导突破限制，需要语义级检测而非仅命令级。",
         
         # 2. 自动委派
-        "delegate_task的超时限制是模型层限制，无法通过代码架构消除。自动委派需要异步任务队列+回调机制，当前代码中不存在。",
+        "delegate_task的Timeout限制是模型层限制，无法通过代码架构消除。自动委派需要异步任务队列+回调机制，当前代码中不存在。",
         "Claude/Qwen/CodeWhale是外部模型，无法保证实时可用。fallback_manager.py已实现降级链，但缺少异步任务持久化。",
         
         # 3. 用户门禁
-        "三级审批(approval.py)已实现，但阻塞式审批需要UI/CLI实时交互，当前start.ps1是批处理菜单，无法真正'暂停等待'。",
-        "异步审批的2小时超时在实际运行中可能导致状态不一致（Agent已继续执行，用户稍后拒绝）。",
+        "三级审批(approval.py)已实现，但Blocking approval需要UI/CLI实时交互，当前start.ps1是批处理菜单，无法真正'暂停等待'。",
+        "异步审批的2小时Timeout在实际运行中可能导致状态不一致（Agent已继续执行，用户稍后拒绝）。",
         
         # 4. 驾驶舱
         "observability.py提供仪表盘数据聚合，但缺少实时WebSocket推送，'一屏统览'需要前端实现。",
@@ -64,15 +64,15 @@ REVIEW_RESULT = ArchitectureReview(
     recommendations=[
         # 硬约束
         "建议将硬约束从'命令白名单'升级为'角色能力矩阵'：在adapters.py中为每个Agent定义allowed_actions={read, design, code, test, review}，调度层根据角色过滤任务。",
-        "增加语义级约束检测：在ContextManager中注入'system_capability_guard'层，检测Agent输出是否包含被禁止的行为（如Hermes输出代码块）。",
+        "增加语义级约束检测：在ContextManager中注入'system_capability_guard'层，检测Agent输出是否包含被禁止的Behavior（如Hermes输出代码块）。",
         
         # 自动委派
         "引入异步任务队列(TaskQueue)：基于SQLite持久化，支持submit_task(task_id, agent, callback_phase)和poll_task(task_id)。",
-        "delegate_task的超时限制无法绕过，但可通过'任务分片+增量交付'策略：将大任务拆分为5分钟可完成的子任务，避免单次超时。",
+        "delegate_task的Timeout限制无法绕过，但可通过'任务分片+增量交付'策略：将大任务拆分为5分钟可完成的子任务，避免单次Timeout。",
         
         # 用户门禁
-        "将阻塞式审批与Hermes的conversation loop集成：在关键phase_advance前调用approval.request()，通过Hermes的交互界面等待用户输入。",
-        "增加审批状态机持久化：当前approval.py的_records仅存内存，进程重启后丢失，应写入state_store的checkpoints表。",
+        "将Blocking approval与Hermes的conversation loop集成：在关键phase_advance前调用approval.request()，通过Hermes的交互界面等待用户输入。",
+        "增加Approval status机持久化：当前approval.py的_records仅存内存，进程重启后丢失，应写入state_store的checkpoints表。",
         
         # 驾驶舱
         "驾驶舱建议分阶段实现：Phase 1用rich库终端仪表盘（已完成），Phase 2用轻量级Web UI（如Gradio/Streamlit），Phase 3用WebSocket实时推送。",
@@ -91,9 +91,9 @@ REVIEW_RESULT = ArchitectureReview(
     
     implementation_priority=[
         "P0-紧急（架构阻塞）：消除模块循环依赖 + 拆分pipeline.py",
-        "P0-紧急：实现异步任务队列（替代delegate_task超时限制）",
+        "P0-紧急：实现异步任务队列（替代delegate_taskTimeout限制）",
         "P1-高优：角色能力矩阵（硬约束不可绕过）",
-        "P1-高优：审批状态持久化（防止进程重启丢失）",
+        "P1-高优：Approval status持久化（防止进程重启丢失）",
         "P2-中优：驾驶舱Web UI（一屏统览）",
         "P2-中优：Agentic Search向量检索升级",
         "P3-低优：语义级约束检测（AI辅助）",
@@ -102,8 +102,8 @@ REVIEW_RESULT = ArchitectureReview(
     
     risks=[
         "循环依赖导致import失败：在特定Python环境或打包时可能触发ImportError，影响系统启动。",
-        "审批状态内存丢失：进程崩溃或重启后所有待审批请求丢失，用户可能重复提交。",
-        "自动委派超时累积：即使任务分片，多轮委派的总时间仍可能超过用户预期，导致体验下降。",
+        "Approval status内存丢失：进程崩溃或重启后所有待审批请求丢失，用户可能重复提交。",
+        "自动委派Timeout累积：即使任务分片，多轮委派的总时间仍可能超过用户预期，导致体验下降。",
         "驾驶舱数据延迟：基于轮询的Dashboard无法实时反映Agent状态，在快速迭代场景下信息滞后。",
         "硬约束被提示工程绕过：恶意或意外的用户提示可能诱导Agent突破角色限制，语义检测准确率难以保证100%。",
         "降级链雪崩：Claude→Qwen→CodeWhale全部不可用时，系统进入BLACK状态，但缺少人工接管流程。",
@@ -112,10 +112,10 @@ REVIEW_RESULT = ArchitectureReview(
     gaps=[
         "缺少'交付层'代码模块：5层架构中的交付层只有DEPLOY.md文档，无对应src/delivery.py。",
         "缺少'调度层'核心实现：自动委派逻辑散落在fallback_manager.py和adapters.py，无统一调度器。",
-        "缺少配置中心：系统参数（超时、阈值、Agent路由）硬编码在各模块中，无法动态调整。",
+        "缺少配置中心：系统参数（Timeout、阈值、Agent路由）硬编码在各模块中，无法动态调整。",
         "缺少端到端集成测试：tests/目录下只有单元测试，无跨模块集成测试验证5层架构流转。",
         "缺少Agent间通信协议：Claude/Qwen/CodeWhale通过文件系统（features.json, progress.md）间接通信，无直接消息通道。",
-        "缺少用户交互协议：阻塞式审批需要定义标准输入格式（如JSON/YAML），当前仅支持自由文本。",
+        "缺少用户交互协议：Blocking approval需要定义标准输入格式（如JSON/YAML），当前仅支持自由文本。",
     ],
 )
 
@@ -207,9 +207,9 @@ def generate_review_report(output_path: str = "architecture_review.md") -> str:
         "",
         "**主要障碍**:",
         "- 模块循环依赖和职责混乱（pipeline.py过重）",
-        "- 异步任务队列缺失（无法替代delegate_task超时）",
+        "- 异步任务队列缺失（无法替代delegate_taskTimeout）",
         "- 硬约束仅实现命令级，未实现角色级",
-        "- 审批状态未持久化",
+        "- Approval status未持久化",
         "",
         "**建议路径**:",
         "1. 先做模块重构（P0）：拆分pipeline.py、消除循环依赖、提取共享类型",
@@ -233,5 +233,5 @@ if __name__ == "__main__":
     print(f"     可行性评级: {REVIEW_RESULT.feasibility.upper()}")
     print(f"     关键难点: {len(REVIEW_RESULT.key_challenges)} 项")
     print(f"     建议修改: {len(REVIEW_RESULT.recommendations)} 项")
-    print(f"     风险: {len(REVIEW_RESULT.risks)} 项")
+    print(f"     Risk: {len(REVIEW_RESULT.risks)} 项")
     print(f"     遗漏: {len(REVIEW_RESULT.gaps)} 项")

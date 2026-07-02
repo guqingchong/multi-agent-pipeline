@@ -1,1104 +1,220 @@
 {
   "project": "multi-agent-pipeline",
-  "version": "1.0.0",
-  "schema_version": 1,
-  "generated_by": "Hermes-Research",
-  "generation_date": "2026-06-18",
-  "notes": "Phase 2 task decomposition based on PRD v2.3 Section 20 (Implementation Roadmap). Features are grouped into waves by dependency. No code is written in this phase.",
+  "schema_version": "1.0",
+  "generated_at": "2026-07-02",
+  "based_on": "docs/superpowers/plans/2026-07-02-multi-agent-pipeline-repair-plan.md",
   "features": [
     {
-      "id": "F001",
-      "title": "单 Agent 编码→测试→验证 MVP",
-      "description": "Week 1 MVP: 单 Agent (Kimi K2.6) 跑通一个真实小任务的完整编码→测试→验证流程。验证基础工具链可用性，建立最小可行基准。",
-      "status": "skipped",
-      "owner_agent": "claude",
-      "estimated_complexity": "medium",
+      "id": "R1",
+      "title": "注册表单一真相源 + Phase 模型注册表驱动",
+      "description": "新建 phase_model.py，将 Phase 从 enum 改为注册表驱动；修改 registry.py 移除硬编码 Windows 路径并加 task_type 名称校验；修改 config.py 增加 phase_order 与 agent_cli_paths；修改 models.py 删除旧 enum；全局替换 15+ 模块中的 Phase 旧用法；所有相关测试通过。",
+      "track": "backend",
+      "wave": 1,
+      "complexity": "large",
+      "estimated_lines": "400-700",
       "dependencies": [],
-      "wave": 1,
-      "max_token_budget": 50000,
+      "owner_agent": "claude-code",
+      "reviewer_agent": "codewhale",
+      "tester_agent": "qwen-code",
       "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "单 Agent 成功完成一个真实编码任务（如实现一个简单 CLI 工具）",
-          "payload": "python -c \"import subprocess; result = subprocess.run(['python', 'src/demo_task.py'], capture_output=True, text=True); print(result.stdout)\""
-        },
-        {
-          "type": "test",
-          "description": "编码任务对应的单元测试通过",
-          "payload": "pytest tests/test_demo_task.py -v"
-        },
-        {
-          "type": "command",
-          "description": "git diff 非空，有实际代码提交",
-          "payload": "git diff --stat HEAD~1"
-        },
-        {
-          "type": "assertion",
-          "description": "记录首次 token 消耗和耗时作为基线",
-          "payload": "os.path.exists('docs/baseline_single_agent.json')"
-        }
+        "src/phase_model.py 存在，Phase 类由 REGISTRY 驱动，支持 next()/prev()/is_init()/is_start()/is_terminal()",
+        "src/registry.py 中 agent CLI 路径通过 AGENT_CLI_PATH_* env 解析，无硬编码 Windows 用户名",
+        "src/registry.py 的 register_task_type() 校验名称符合 ^[a-z][a-z0-9_-]*$",
+        "src/models.py 删除旧 8 值 Phase enum，改为从 phase_model 导入",
+        "全局替换 src/pipeline.py、src/phase_flow.py、src/entry.py、src/state_store.py、src/bridge_cli.py、src/phase_checks.py 及测试文件中的 Phase.* 旧用法",
+        "pytest tests/test_registry.py tests/test_phase_model.py tests/test_pipeline.py tests/test_phase_flow.py tests/test_state_store.py tests/test_phase_checks.py -v 全部 PASS"
       ],
-      "skip_reason": "基线对照已完成，单Agent MVP已验证"
+      "status": "pending"
     },
     {
-      "id": "F002",
-      "title": "基线对照实验框架",
-      "description": "建立单 Agent vs 多 Agent (2-Agent) 的基线对照实验框架。设计评估维度（完成质量、token消耗、耗时、人工介入次数），准备3个中等复杂度测试任务。",
-      "status": "skipped",
-      "owner_agent": "claude",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F001"
-      ],
+      "id": "R2",
+      "title": "统一任务队列 queue.py",
+      "description": "合并 src/message_queue.py 与 src/task_queue.py 为 src/queue.py；提供同步与异步统一 API；接入 pipeline_executor.py 与 event_engine.py；删除旧队列文件；修复 SQL DDL 拼接风险。",
+      "track": "backend",
       "wave": 1,
-      "max_token_budget": 30000,
+      "complexity": "large",
+      "estimated_lines": "300-500",
+      "dependencies": ["R1"],
+      "owner_agent": "qwen-code",
+      "reviewer_agent": "codewhale",
+      "tester_agent": "claude-code",
       "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "基线实验脚本存在且可运行",
-          "payload": "python -c \"from src.baseline_experiment import run_baseline; print('baseline_experiment module importable')\""
-        },
-        {
-          "type": "test",
-          "description": "3个测试任务定义完整",
-          "payload": "pytest tests/test_baseline_tasks.py -v"
-        },
-        {
-          "type": "assertion",
-          "description": "评估维度文档化",
-          "payload": "os.path.exists('docs/baseline_metrics.md')"
-        }
+        "src/queue.py 存在，提供 Queue 类，含 push_sync/pull_sync/complete_sync/fail_sync/recover_orphaned_sync/stats_sync 及 async 包装",
+        "DDL 不再拼接 task_type 字符串，task_type 校验由 Registry 负责",
+        "pipeline_executor.py 通过 Queue 派发任务，event_engine.py 改为依赖 Queue",
+        "物理删除 src/message_queue.py 与 src/task_queue.py",
+        "pytest tests/test_queue.py -v 全部 PASS"
       ],
-      "skip_reason": "基线对照实验已完成"
+      "status": "pending"
     },
     {
-      "id": "F003",
-      "title": "异构审查效果验证",
-      "description": "用 DeepSeek V4 Pro 对同一批代码进行审查，与单 Agent 自审对比，验证异构审查是否能发现更多问题。记录审查发现的问题数量和质量。",
-      "status": "skipped",
-      "owner_agent": "codewhale",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F001"
-      ],
-      "wave": 1,
-      "max_token_budget": 30000,
-      "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "CodeWhale 能对 F001 的代码输出结构化审查报告",
-          "payload": "python -c \"from src.review_report import ReviewReport; r = ReviewReport.load('reports/review_f001.json'); print(r.issue_count)\""
-        },
-        {
-          "type": "assertion",
-          "description": "审查报告包含 P0/P1/P2 分级",
-          "payload": "'P0' in open('reports/review_f001.json').read() or 'P1' in open('reports/review_f001.json').read()"
-        },
-        {
-          "type": "manual",
-          "description": "人工确认异构审查发现的问题数量 > 单 Agent 自审",
-          "payload": "人工对比单 Agent 自审 vs CodeWhale 审查发现的问题数量"
-        }
-      ],
-      "skip_reason": "异构审查效果已验证"
-    },
-    {
-      "id": "F004",
-      "title": "3任务基线对照执行与 Kill Switch 判定",
-      "description": "执行 3 个中等复杂度任务的单 Agent vs 2-Agent 对照实验。收集完成质量、token消耗、耗时、人工介入次数数据。应用 Kill Switch：多 Agent 在至少 2/3 任务上显著优于单 Agent 才继续推进。",
-      "status": "skipped",
-      "owner_agent": "hermes",
-      "estimated_complexity": "complex",
-      "dependencies": [
-        "F002",
-        "F003"
-      ],
+      "id": "R3",
+      "title": "编排层轻量化（workflow + phase_flow + system_constraint + suggestion_engine）",
+      "description": "合并 workflow_registry.py/workflow_template.py 为 workflow.py；phase 顺序从注册表/config 读取；system_constraint 路由改为注册表驱动；phase_checks 注册检查函数字典；brownfield 统一为单一 7-phase。",
+      "track": "backend",
       "wave": 2,
-      "max_token_budget": 150000,
+      "complexity": "large",
+      "estimated_lines": "300-500",
+      "dependencies": ["R1"],
+      "owner_agent": "claude-code",
+      "reviewer_agent": "codewhale",
+      "tester_agent": "qwen-code",
       "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "3个任务的单 Agent 和 2-Agent 结果均已记录",
-          "payload": "python -c \"import json; data = json.load(open('docs/baseline_results.json')); assert len(data['tasks']) == 3; assert all('single' in t and 'multi' in t for t in data['tasks'])\""
-        },
-        {
-          "type": "assertion",
-          "description": "Kill Switch 判定结果已记录",
-          "payload": "os.path.exists('docs/kill_switch_verdict.json')"
-        },
-        {
-          "type": "manual",
-          "description": "人工确认是否继续推进多 Agent 架构",
-          "payload": "审查 kill_switch_verdict.json，确认多 Agent 在 2/3 任务上显著优于单 Agent"
-        }
+        "src/workflow.py 存在，build_workflows() 仅返回 greenfield 与 brownfield（7-phase）两种模板",
+        "src/phase_flow.py 从 workflow.py 读取当前 phase 顺序，不再硬编码",
+        "src/system_constraint.py 的 route_task 从 REGISTRY 读取 task_type 默认 agent",
+        "src/phase_checks.py 提供 CHECK_REGISTRY 与 run_check()，检查函数显式注册",
+        "pytest tests/test_phase_flow.py tests/test_system_constraint.py tests/test_workflow.py -v 全部 PASS"
       ],
-      "skip_reason": "Kill Switch决策：继续推进多Agent架构"
+      "status": "pending"
     },
     {
-      "id": "F005",
-      "title": "最简版 pipeline.py 状态机",
-      "description": "实现最简版 pipeline.py，支持 init / develop / check / advance 命令。状态机管理 Phase 0-3 流转，每个 advance 必须通过 check 函数。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "complex",
-      "dependencies": [
-        "F004"
-      ],
-      "wave": 1,
-      "max_token_budget": 80000,
+      "id": "R4",
+      "title": "独立审计员 Inspector / Veto 机制",
+      "description": "新建 src/inspector.py，实现持有 PRD/架构/旅程/验收标准的独立审计员；在 phase_flow.advance() 阶段检查通过后、推进前调用 Inspector；veto 时阻止推进并记录审计报告；bridge_cli 增加 inspect / audit-report 命令。",
+      "track": "backend",
+      "wave": 2,
+      "complexity": "medium",
+      "estimated_lines": "200-350",
+      "dependencies": ["R3"],
+      "owner_agent": "qwen-code",
+      "reviewer_agent": "codewhale",
+      "tester_agent": "claude-code",
       "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "pipeline.py init 能创建项目骨架",
-          "payload": "python src/pipeline.py init test_project --description 'test' --stack 'python'"
-        },
-        {
-          "type": "command",
-          "description": "pipeline.py check 能正确拦截未满足条件",
-          "payload": "python src/pipeline.py check test_project || true"
-        },
-        {
-          "type": "command",
-          "description": "pipeline.py advance 不能跳过未通过的 check",
-          "payload": "python src/pipeline.py advance test_project 2>&1 | grep -i 'block|fail|not pass' || echo 'BLOCKED as expected'"
-        },
-        {
-          "type": "test",
-          "description": "状态机单元测试通过",
-          "payload": "pytest tests/test_pipeline_state_machine.py -v"
-        }
+        "src/inspector.py 存在，Inspector.audit() 返回 AuditReport（含 verdict/findings/risks）",
+        "PhaseFlow.advance() 在阶段检查通过后调用 Inspector，veto 时抛出 PhaseBlockedError",
+        "审计报告写入 state_store.audit_logs(event='inspector_audit')",
+        "bridge_cli.py 支持 inspect --project 与 audit-report --project",
+        "pytest tests/test_inspector.py -v 全部 PASS"
       ],
-      "phase_completed": {
-        "develop": "2026-06-18",
-        "review": "2026-06-18",
-        "test": "2026-06-18"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 4,
-        "p2": 4,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 22,
-        "tests_total": 22,
-        "coverage": 81
-      }
+      "status": "pending"
     },
     {
-      "id": "F006",
-      "title": "Hermes 双模型路由实现",
-      "description": "实现 Hermes 双模型路由：日常用 Kimi K2.6，Phase 1/2/5 和关键决策点自动切换到 Qwen 3.7 Max。包含上下文连贯性保障（切换时传递完整上下文）和成本监控。",
-      "status": "skipped",
-      "owner_agent": "claude",
-      "estimated_complexity": "complex",
-      "dependencies": [
-        "F005"
-      ],
+      "id": "R5",
+      "title": "入口层统一 + Windows 本地运行脚本",
+      "description": "精简 pipeline.py CLI 并动态生成 help；bridge_cli.py 移除重复命令代理，直接调用核心 API；main.py 删除城策通残留 mock 路由，保留真实核心端点；新增 PowerShell 启动脚本与 env 模板。",
+      "track": "backend",
       "wave": 3,
-      "max_token_budget": 60000,
+      "complexity": "large",
+      "estimated_lines": "400-700",
+      "dependencies": ["R1", "R4"],
+      "owner_agent": "claude-code",
+      "reviewer_agent": "codewhale",
+      "tester_agent": "qwen-code",
       "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "双模型路由模块可导入",
-          "payload": "python -c \"from src.dual_model_router import DualModelRouter; print('DualModelRouter importable')\""
-        },
-        {
-          "type": "test",
-          "description": "路由规则单元测试通过",
-          "payload": "pytest tests/test_dual_model_router.py -v"
-        },
-        {
-          "type": "assertion",
-          "description": "Qwen 3.7 Max 已配置并可用",
-          "payload": "os.path.exists('~/.hermes/config.yaml') and 'qwen3.7-max' in open(os.path.expanduser('~/.hermes/config.yaml')).read()"
-        }
+        "python src/pipeline.py --help 中 phase choices 来自 REGISTRY.list_phases()",
+        "bridge_cli.py 的 init/advance/status/resume/rollback/approve/mark-tests 直接调用 PhaseFlow/StateStore",
+        "main.py 删除 /finance/*、/knowledge/*、/documents/* 路由及对应 Pydantic 模型",
+        "main.py 的 /agents、/queue/stats、/projects/{name}、/projects/{name}/advance 返回真实数据",
+        "scripts/start-windows.ps1、scripts/start-api.ps1、scripts/env.example.ps1 存在且可运行",
+        "pytest tests/test_pipeline.py tests/test_bridge_cli.py tests/test_main.py -v 全部 PASS"
       ],
-      "skip_reason": "双模型路由已实现并正在使用"
+      "status": "pending"
     },
     {
-      "id": "F007",
-      "title": "Layer 0 最小可行沙箱",
-      "description": "实现最小可行沙箱：NTFS ACL 目录隔离 + 命令白名单 + 本地代理层网络过滤 + 人工审批。支持 5 种 Profile (LOCKDOWN/PIPELINE/ASSISTANT/RESEARCH/FREE) 和 4 级交互等级 (T0-T3)。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "complex",
-      "dependencies": [
-        "F005"
-      ],
-      "wave": 2,
-      "max_token_budget": 100000,
-      "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "Profile 切换命令工作正常",
-          "payload": "python src/pipeline.py mode test_project assistant && python src/pipeline.py mode test_project pipeline"
-        },
-        {
-          "type": "command",
-          "description": "命令白名单拦截未知命令",
-          "payload": "python -c \"from src.command_gate import CommandGate; g = CommandGate(); assert not g.is_allowed('rm -rf /')\""
-        },
-        {
-          "type": "test",
-          "description": "绕过检测能识别 base64 编码、分片组合、替代解释器",
-          "payload": "pytest tests/test_bypass_detector.py -v"
-        },
-        {
-          "type": "command",
-          "description": "临时授权到期后自动回退",
-          "payload": "python -c \"from src.sandbox import Sandbox; s = Sandbox(); s.elevate('free', 1); import time; time.sleep(2); assert s.current_profile != 'free'\""
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-18",
-        "review": "2026-06-18",
-        "test": "2026-06-18"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": true,
-        "p2": 3,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 190,
-        "tests_total": 190,
-        "coverage": 92
-      }
-    },
-    {
-      "id": "F008",
-      "title": "Layer 2 SQLite 状态持久化",
-      "description": "实现 SQLite 状态数据库，包含 projects / features / checkpoints / traces / audit_logs / model_health 表。支持 checkpoint 写入、resume 恢复、schema 版本控制。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F005"
-      ],
-      "wave": 2,
-      "max_token_budget": 50000,
-      "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "SQLite DB 能创建所有核心表",
-          "payload": "python -c \"from src.state_db import StateDB; db = StateDB('test.db'); db.init_schema(); print('Schema initialized')\""
-        },
-        {
-          "type": "test",
-          "description": "checkpoint 写入和恢复测试通过",
-          "payload": "pytest tests/test_state_db.py -v"
-        },
-        {
-          "type": "command",
-          "description": "pipeline.py resume 能从 checkpoint 恢复",
-          "payload": "python src/pipeline.py resume test_project || true"
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-18",
-        "review": "2026-06-18",
-        "test": "2026-06-18"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": false,
-        "p2": 4,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 190,
-        "tests_total": 190,
-        "coverage": 92
-      }
-    },
-    {
-      "id": "F009",
-      "title": "Budget Enforcer 预算治理",
-      "description": "实现三级预算预警（80% 告警 / 100% 软熔断 / 150% 硬熔断）。支持 per-step / per-task / per-project / per-day 预算硬上限。基于 Week 1-3 实测数据动态校准。",
-      "status": "skipped",
-      "owner_agent": "claude",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F005"
-      ],
-      "wave": 4,
-      "max_token_budget": 40000,
-      "acceptance_criteria": [
-        {
-          "type": "test",
-          "description": "预算三级预警测试通过",
-          "payload": "pytest tests/test_budget_enforcer.py -v"
-        },
-        {
-          "type": "command",
-          "description": "token 超预算触发熔断",
-          "payload": "python -c \"from src.budget_enforcer import BudgetEnforcer; b = BudgetEnforcer(per_task_max_tokens=100); b.consume(150); assert b.is_tripped()\""
-        },
-        {
-          "type": "command",
-          "description": "pipeline.py budget 能显示 per-feature 成本",
-          "payload": "python src/pipeline.py budget test_project"
-        }
-      ],
-      "skip_reason": "预算治理延后处理"
-    },
-    {
-      "id": "F010",
-      "title": "Circuit Breaker 与降级策略",
-      "description": "实现 Circuit Breaker（连续失败熔断）和五级降级策略（green→yellow→orange→red→black）。支持 Agent 不可用时代降级、模型 API 故障时自动切换。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F005"
-      ],
-      "wave": 2,
-      "max_token_budget": 40000,
-      "acceptance_criteria": [
-        {
-          "type": "test",
-          "description": "Circuit Breaker 状态转换测试通过",
-          "payload": "pytest tests/test_circuit_breaker.py -v"
-        },
-        {
-          "type": "command",
-          "description": "连续失败 3 次后熔断器打开",
-          "payload": "python -c \"from src.circuit_breaker import CircuitBreaker; cb = CircuitBreaker(); [cb.record_failure() for _ in range(3)]; assert cb.is_open()\""
-        },
-        {
-          "type": "command",
-          "description": "降级策略模块可导入",
-          "payload": "python -c \"from src.degradation_strategy import DegradationStrategy; print('DegradationStrategy importable')\""
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-18",
-        "review": "2026-06-18",
-        "test": "2026-06-18"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": false,
-        "p2": 1,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 190,
-        "tests_total": 190,
-        "coverage": 92
-      }
-    },
-    {
-      "id": "F011",
-      "title": "ContextManager 上下文管理器",
-      "description": "实现上下文窗口管理器：分层注入策略（安全指令永不压缩）、Reinforcement 强化机制、Agentic Search 按需加载、上下文压缩策略。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F005"
-      ],
-      "wave": 2,
-      "max_token_budget": 50000,
-      "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "ContextManager 模块可导入",
-          "payload": "python -c \"from src.context_manager import ContextManager; print('ContextManager importable')\""
-        },
-        {
-          "type": "test",
-          "description": "安全指令在上下文压缩后仍然保留",
-          "payload": "pytest tests/test_context_manager.py::test_safety_preserved -v"
-        },
-        {
-          "type": "test",
-          "description": "Agentic Search 按需加载测试通过",
-          "payload": "pytest tests/test_context_manager.py::test_agentic_search -v"
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-18",
-        "review": "2026-06-18",
-        "test": "2026-06-18"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": true,
-        "p2": 2,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 190,
-        "tests_total": 190,
-        "coverage": 92
-      }
-    },
-    {
-      "id": "F012",
-      "title": "Agent Adapter 三层架构",
-      "description": "实现 Agent Adapter 容错架构：适配层（每个 Agent 原生格式）、解析层（正则+启发式提取）、容错层（超时/崩溃/截断恢复）。支持 ClaudeCodeAdapter / CodeWhaleAdapter / QwenCodeAdapter。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "complex",
-      "dependencies": [
-        "F006",
-        "F007"
-      ],
+      "id": "R6",
+      "title": "状态持久层精简 + thresholds.yaml 外置",
+      "description": "简化 state_store.py 索引与 schema；移除 v1 schema 兼容代码；创建 config/thresholds.yaml；phase_checks 从 thresholds.yaml 读取阈值而非硬编码。",
+      "track": "backend",
       "wave": 3,
-      "max_token_budget": 80000,
+      "complexity": "medium",
+      "estimated_lines": "150-300",
+      "dependencies": ["R1"],
+      "owner_agent": "qwen-code",
+      "reviewer_agent": "codewhale",
+      "tester_agent": "claude-code",
       "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "所有 Agent Adapter 可导入",
-          "payload": "python -c \"from src.adapters import ClaudeCodeAdapter, CodeWhaleAdapter, QwenCodeAdapter; print('All adapters importable')\""
-        },
-        {
-          "type": "test",
-          "description": "Adapter 解析层单元测试通过",
-          "payload": "pytest tests/test_adapters.py -v"
-        },
-        {
-          "type": "test",
-          "description": "容错层异常恢复测试通过",
-          "payload": "pytest tests/test_adapter_tolerance.py -v"
-        }
+        "config/thresholds.yaml 存在，包含 checks/budget 配置项",
+        "state_store.py 为 projects/features/checkpoints/audit_logs 等增加索引，移除 v1 兼容代码",
+        "phase_checks.py 的硬编码阈值改为 load_thresholds() 读取",
+        "pytest tests/test_state_store.py tests/test_phase_checks.py -v 全部 PASS"
       ],
-      "phase_completed": {
-        "develop": "2026-06-18",
-        "review": "2026-06-18",
-        "test": "2026-06-18"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 0,
-        "p2": 0,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 452,
-        "tests_total": 452,
-        "coverage": 95
-      }
+      "status": "pending"
     },
     {
-      "id": "F013",
-      "title": "Phase 0-6 完整流程编排",
-      "description": "实现 Phase 0-6 完整流程：Initializer → Design → Decompose → Develop → Test → Accept → Deploy。每个 Phase 的 advance 必须通过 check 函数。支持 rollback-phase 回退（需人工审批）。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "complex",
-      "dependencies": [
-        "F008",
-        "F009",
-        "F010",
-        "F011",
-        "F012"
+      "id": "R7",
+      "title": "Agent 适配器 + health check + 双层 mock",
+      "description": "增强 src/adapters.py：增加 AgentAdapter.version() 健康检查；run() 改为 _execute_cli + _parse_and_validate 双层结构，AGENT_MOCK 仅短路 subprocess；bridge_cli health check 复用 AgentAdapter；固化 tests/conftest.py mock fixture。",
+      "track": "backend",
+      "wave": 3,
+      "complexity": "medium",
+      "estimated_lines": "200-400",
+      "dependencies": ["R2"],
+      "owner_agent": "claude-code",
+      "reviewer_agent": "codewhale",
+      "tester_agent": "qwen-code",
+      "acceptance_criteria": [
+        "AgentAdapter 提供 version()、run()、_execute_cli()、_parse_and_validate()",
+        "AGENT_MOCK=true 时 _execute_cli 返回模拟原始输出，_parse_and_validate 仍被调用",
+        "bridge_cli check-hermes / dispatch 前 health check 复用 AgentAdapter.version()",
+        "tests/conftest.py 设置 AGENT_MOCK=true fixture 与 fresh_queue fixture",
+        "pytest tests/test_adapters.py tests/test_pipeline_executor.py -v 全部 PASS"
       ],
+      "status": "pending"
+    },
+    {
+      "id": "R8",
+      "title": "文档与 Windows 部署手册重写",
+      "description": "重写 README.md、progress.md、DEPLOY.md、AGENTS.md；创建 docs/superpowers/runbooks/windows-setup.md 与 agent-setup.md；删除 docker-compose.yml；文档内容与修复后架构一致，Windows-only。",
+      "track": "docs",
       "wave": 4,
-      "max_token_budget": 100000,
+      "complexity": "medium",
+      "estimated_lines": "300-500",
+      "dependencies": ["R5", "R6", "R7"],
+      "owner_agent": "qwen-code",
+      "reviewer_agent": "codewhale",
+      "tester_agent": "claude-code",
       "acceptance_criteria": [
-        {
-          "type": "test",
-          "description": "Phase 流转状态机测试通过",
-          "payload": "pytest tests/test_phase_flow.py -v"
-        },
-        {
-          "type": "command",
-          "description": "pipeline.py check 拦截未满足条件的 advance",
-          "payload": "python -c \"from src.phase_checks import check_decompose; assert not check_decompose('test_project')['passed']\""
-        },
-        {
-          "type": "command",
-          "description": "rollback-phase 命令可用",
-          "payload": "python src/pipeline.py rollback-phase test_project --to design 2>&1 | grep -i 'approval|审批' || echo 'Approval required as expected'"
-        }
+        "README.md 描述修复后架构、Windows 快速开始、核心命令",
+        "progress.md 诚实反映当前进度，不再包含虚假完成度",
+        "DEPLOY.md 为纯 Windows 部署指南，无 Docker 内容",
+        "AGENTS.md 不再为 (TBD)，包含 agent 安装与配置说明",
+        "docker-compose.yml 已物理删除"
       ],
-      "phase_completed": {
-        "develop": "2026-06-18",
-        "review": "2026-06-18",
-        "test": "2026-06-18"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 2,
-        "p2": 4,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 373,
-        "tests_total": 373,
-        "coverage": 92
-      }
+      "status": "pending"
     },
     {
-      "id": "F014",
-      "title": "人机审批分级系统",
-      "description": "实现三级审批：阻塞式（Phase 1/5，30分钟超时）、异步式（依赖安装/git push，2小时超时）、默认放行式（低风险操作，5分钟自动放行）。支持审批上下文自动摘要。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F013"
-      ],
+      "id": "R9",
+      "title": "全局测试、可观测性与 9 维度验收",
+      "description": "增强现有 src/observability.py 的 trace() 与 JSON 结构化日志；编写 tests/integration/test_full_flow.py；创建 scripts/run-checks.ps1 一键质量门禁；运行全量测试并修复回归。",
+      "track": "backend",
       "wave": 4,
-      "max_token_budget": 50000,
+      "complexity": "large",
+      "estimated_lines": "200-400",
+      "dependencies": ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"],
+      "owner_agent": "claude-code",
+      "reviewer_agent": "codewhale",
+      "tester_agent": "qwen-code",
       "acceptance_criteria": [
-        {
-          "type": "test",
-          "description": "三级审批单元测试通过",
-          "payload": "pytest tests/test_approval_system.py -v"
-        },
-        {
-          "type": "command",
-          "description": "阻塞式审批超时后暂停保存状态",
-          "payload": "python -c \"from src.approval import BlockingApproval; a = BlockingApproval(timeout=1); a.request('test'); import time; time.sleep(2); assert a.is_expired()\""
-        },
-        {
-          "type": "command",
-          "description": "审批摘要自动生成",
-          "payload": "python -c \"from src.approval import generate_summary; s = generate_summary(cost=12.5, risk='medium'); assert len(s) <= 200; print(s)\""
-        }
+        "src/observability.py 新增 trace()，不覆盖现有 Dashboard/AlertManager",
+        "tests/integration/test_full_flow.py 覆盖 init → advance 完整流程",
+        "scripts/run-checks.ps1 一键运行 pytest + ruff + mypy + health check",
+        "pytest tests/ -q --tb=short 全部 PASS",
+        "9 大质量维度 + 实用性 + 治理/一致性验收清单全部通过"
       ],
-      "phase_completed": {
-        "develop": "2026-06-18",
-        "review": "2026-06-18",
-        "test": "2026-06-18"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 2,
-        "p2": 3,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 501,
-        "tests_total": 501,
-        "coverage": 93
-      }
-    },
-    {
-      "id": "F015",
-      "title": "可观测性仪表盘与实时告警",
-      "description": "实现可观测性系统：SQLite 存储 + rich/textual 终端仪表盘 + 实时告警。包含执行追踪、成本追踪、质量评估、审计日志、模型健康度。支持 pipeline.py status / budget / model-health / report 命令。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "complex",
-      "dependencies": [
-        "F013"
-      ],
-      "wave": 4,
-      "max_token_budget": 80000,
-      "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "pipeline.py status 输出实时仪表盘",
-          "payload": "python src/pipeline.py status test_project"
-        },
-        {
-          "type": "command",
-          "description": "pipeline.py report 生成 Markdown 报告",
-          "payload": "python src/pipeline.py report test_project --output /tmp/test_report.md && cat /tmp/test_report.md | head -20"
-        },
-        {
-          "type": "test",
-          "description": "实时告警阈值触发测试通过",
-          "payload": "pytest tests/test_alert_manager.py -v"
-        },
-        {
-          "type": "command",
-          "description": "模型健康度监控可用",
-          "payload": "python src/pipeline.py model-health"
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-18",
-        "review": "2026-06-18",
-        "test": "2026-06-19"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 5,
-        "p2": 5,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 624,
-        "tests_total": 624,
-        "coverage": 93
-      }
-    },
-    {
-      "id": "F016",
-      "title": "Prompt Cache 四层策略",
-      "description": "实现 Prompt Cache 四层策略：L1 模型服务端缓存、L2 应用层 SQLite 缓存、L3 向量检索缓存（可选）、L4 本地文件索引缓存。目标命中率 >50%，低于 30% 触发告警。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F013"
-      ],
-      "wave": 4,
-      "max_token_budget": 50000,
-      "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "缓存模块可导入",
-          "payload": "python -c \"from src.prompt_cache import PromptCache; print('PromptCache importable')\""
-        },
-        {
-          "type": "test",
-          "description": "缓存命中率计算正确",
-          "payload": "pytest tests/test_prompt_cache.py -v"
-        },
-        {
-          "type": "assertion",
-          "description": "缓存命中率监控数据写入 traces 表",
-          "payload": "os.path.exists('~/.hermes/pipelines/test_project.db')"
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-18",
-        "review": "2026-06-19",
-        "test": "2026-06-19"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 5,
-        "p2": 8,
-        "passed": true,
-        "note": "返修后 P0-1/P0-2/P0-3 全部修复"
-      },
-      "test_result": {
-        "tests_passed": 624,
-        "tests_total": 624,
-        "coverage": 94
-      }
-    },
-    {
-      "id": "F017",
-      "title": "Qwen Code 辅助 Agent 集成",
-      "description": "集成 Qwen Code (Qwen3-Coder-Plus) 作为辅助 Coder 和 E2E 测试专家。支持 Claude Code 降级备用、浏览器 E2E 测试（Playwright）、中文文档生成。保持 Qwen 原生模型适配。",
-      "status": "passed",
-      "owner_agent": "qwen",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F012"
-      ],
-      "wave": 5,
-      "max_token_budget": 60000,
-      "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "Qwen Code Adapter 可导入并连接",
-          "payload": "python -c \"from src.adapters import QwenCodeAdapter; a = QwenCodeAdapter(); print('QwenCodeAdapter initialized')\""
-        },
-        {
-          "type": "test",
-          "description": "E2E 测试框架可用",
-          "payload": "pytest tests/test_e2e_framework.py -v"
-        },
-        {
-          "type": "command",
-          "description": "降级路径可用：Claude 不可用时自动切换到 Qwen",
-          "payload": "python -c \"from src.degradation_strategy import DegradationStrategy; d = DegradationStrategy(); assert d.get_fallback('claude') == 'qwen'\""
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-19",
-        "review": "2026-06-19",
-        "test": "2026-06-19"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 1,
-        "p2": 2,
-        "passed": true,
-        "note": "修复后重新审核+测试通过，P1 Dual Module Problem 待后续统一导入规范"
-      },
-      "test_result": {
-        "tests_passed": 773,
-        "tests_total": 773,
-        "coverage": 85
-      }
-    },
-    {
-      "id": "F018",
-      "title": "并行 Worktree 管理",
-      "description": "实现并行 feature 开发支持：外部目录 worktree（避免 Windows 260 字符路径限制）、文件重叠检测、自动清理机制。支持同一 wave 内无依赖 feature 的并行开发。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F013"
-      ],
-      "wave": 5,
-      "max_token_budget": 50000,
-      "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "worktree 创建在外部目录",
-          "payload": "python -c \"from src.worktree_manager import WorktreeManager; w = WorktreeManager(); path = w.create('test_project', 'F999'); assert 'agent-worktrees' in path; print(path)\""
-        },
-        {
-          "type": "test",
-          "description": "文件重叠检测测试通过",
-          "payload": "pytest tests/test_worktree_manager.py::test_overlap_detection -v"
-        },
-        {
-          "type": "command",
-          "description": "feature passed 后自动清理 worktree",
-          "payload": "python -c \"from src.worktree_manager import WorktreeManager; w = WorktreeManager(); w.remove('test_project', 'F999'); import os; assert not os.path.exists(path)\""
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-19",
-        "review": "2026-06-19",
-        "test": "2026-06-19"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 1,
-        "p2": 2,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 88,
-        "tests_total": 88,
-        "coverage": 90
-      }
-    },
-    {
-      "id": "F019",
-      "title": "4-Agent 全团队模式验证",
-      "description": "验证 4-Agent 全团队模式（Hermes + Claude Code + CodeWhale + Qwen Code）在复杂项目（≥10 features）上的协作效果。测试并行开发、E2E 测试、文档生成、质量门禁。",
-      "status": "passed",
-      "owner_agent": "hermes",
-      "estimated_complexity": "complex",
-      "dependencies": [
-        "F017",
-        "F018"
-      ],
-      "wave": 6,
-      "max_token_budget": 150000,
-      "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "4-Agent 模式能完成一个 ≥10 features 的复杂项目",
-          "payload": "python -c \"import json; f = json.load(open('features.json')); assert len(f['features']) >= 10; print('Complex project features loaded')\""
-        },
-        {
-          "type": "test",
-          "description": "回归测试通过率 > 90%",
-          "payload": "pytest tests/ --tb=short | tail -5 | grep -E 'passed|failed'"
-        },
-        {
-          "type": "assertion",
-          "description": "E2E 测试报告已生成",
-          "payload": "os.path.exists('reports/e2e_report.md')"
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-19",
-        "review": "2026-06-19",
-        "test": "2026-06-19"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 0,
-        "p2": 0,
-        "passed": true,
-        "note": "4-Agent全团队模式验证通过，本项目作为验证目标"
-      },
-      "test_result": {
-        "tests_passed": 773,
-        "tests_total": 773,
-        "coverage": 93,
-        "note": "100%通过率，E2E报告已生成"
-      }
-    },
-    {
-      "id": "F020",
-      "title": "性能优化与 Prompt Cache 调优",
-      "description": "优化 Prompt Cache 命中率、模型健康度监控、上下文压缩效率。基于 Week 1-10 实测数据调优所有预算和策略参数。",
-      "status": "passed",
-      "owner_agent": "claude",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F019"
-      ],
-      "wave": 7,
-      "max_token_budget": 60000,
-      "acceptance_criteria": [
-        {
-          "type": "assertion",
-          "description": "Prompt Cache 命中率 > 50%",
-          "payload": "json.load(open('reports/cache_stats.json'))['hit_rate'] > 0.5"
-        },
-        {
-          "type": "assertion",
-          "description": "双模型路由上下文损耗 < 20%",
-          "payload": "json.load(open('reports/context_loss.json'))['loss_ratio'] < 0.2"
-        },
-        {
-          "type": "command",
-          "description": "性能基准测试通过",
-          "payload": "pytest tests/test_performance.py -v"
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-19",
-        "review": "2026-06-19",
-        "test": "2026-06-19"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 1,
-        "p2": 3,
-        "passed": true,
-        "note": "审核通过(CodeWhale 444s), P1 benchmark状态管理待优化"
-      },
-      "test_result": {
-        "tests_passed": 37,
-        "tests_total": 37,
-        "coverage": 85
-      }
-    },
-    {
-      "id": "F021",
-      "title": "用户文档与部署指南",
-      "description": "生成面向用户的文档：README.md（快速开始）、DEPLOY.md（面向小白的部署指南）、setup.ps1 / start.ps1 / verify-runtime.ps1。验证非技术用户能按文档启动应用。",
-      "status": "passed",
-      "owner_agent": "qwen",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F019"
-      ],
-      "wave": 7,
-      "max_token_budget": 40000,
-      "acceptance_criteria": [
-        {
-          "type": "command",
-          "description": "setup.ps1 能成功安装依赖",
-          "payload": "powershell -ExecutionPolicy Bypass -File setup.ps1"
-        },
-        {
-          "type": "command",
-          "description": "应用能正常导入",
-          "payload": "python -c \"from src.pipeline import Pipeline; print('Pipeline importable')\""
-        },
-        {
-          "type": "command",
-          "description": "verify-runtime.ps1 执行通过",
-          "payload": "powershell -ExecutionPolicy Bypass -File verify-runtime.ps1"
-        },
-        {
-          "type": "manual",
-          "description": "README.md 和 DEPLOY.md 面向小白可读",
-          "payload": "人工确认文档无技术黑话，非技术用户能按步骤启动"
-        }
-      ],
-      "phase_completed": {
-        "develop": "2026-06-19",
-        "review": "2026-06-19",
-        "test": "2026-06-19"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 2,
-        "p2": 3,
-        "passed": true,
-        "note": "审核通过(CodeWhale 73s), P0已修复($Gray定义), P1 pip错误处理待优化"
-      },
-      "test_result": {
-        "tests_passed": 0,
-        "tests_total": 0,
-        "coverage": 0,
-        "note": "文档任务，验收标准已验证"
-      }
-    },
-    {
-      "id": "F022",
-      "title": "Kill Switch 评估报告与项目归档",
-      "description": "生成完整的 Kill Switch 评估报告：多 Agent vs 单 Agent 的对比数据、成本分析、质量评估。归档项目状态，生成最终交付报告。",
-      "status": "pending",
-      "owner_agent": "hermes",
-      "estimated_complexity": "medium",
-      "dependencies": [
-        "F020",
-        "F021"
-      ],
-      "wave": 8,
-      "max_token_budget": 30000,
-      "acceptance_criteria": [
-        {
-          "type": "assertion",
-          "description": "Kill Switch 评估报告已生成",
-          "payload": "os.path.exists('reports/kill_switch_final_report.md')"
-        },
-        {
-          "type": "assertion",
-          "description": "项目总成本在预算 80% 以内",
-          "payload": "json.load(open('reports/final_cost.json'))['total_usd'] < 50.0 * 0.8"
-        },
-        {
-          "type": "manual",
-          "description": "人类最终验收确认",
-          "payload": "人工审查最终交付报告，确认所有 Phase 通过"
-        }
-      ]
-    },
-    {
-      "id": "F023",
-      "title": "入口层自动加载",
-      "description": "每次对话自动加载项目状态、显示驾驶舱、识别用户意图",
-      "owner": "Claude Code",
-      "wave": 9,
-      "dependencies": [
-        "F005",
-        "F008"
-      ],
-      "estimated_complexity": "medium",
-      "max_token_budget": 50000,
-      "acceptance_criteria": [
-        {
-          "id": "AC1",
-          "type": "command",
-          "description": "自动加载项目状态",
-          "payload": "python -c 'from entry import auto_load; auto_load()'"
-        },
-        {
-          "id": "AC2",
-          "type": "command",
-          "description": "显示驾驶舱",
-          "payload": "python -c 'from entry import show_dashboard; show_dashboard()'"
-        },
-        {
-          "id": "AC3",
-          "type": "test",
-          "description": "入口层单元测试通过",
-          "payload": "pytest tests/test_entry.py -v"
-        }
-      ],
-      "status": "passed",
-      "phase_completed": {
-        "develop": "2026-06-19",
-        "review": "2026-06-19",
-        "test": "2026-06-19"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 0,
-        "p2": 0,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 1004,
-        "tests_total": 1004,
-        "coverage": 90
-      }
-    },
-    {
-      "id": "F024",
-      "title": "系统级约束层",
-      "description": "系统自动约束任务路由，编码→Claude，审核→CodeWhale，测试→Qwen",
-      "owner": "Claude Code",
-      "wave": 9,
-      "dependencies": [
-        "F023",
-        "F012"
-      ],
-      "estimated_complexity": "medium",
-      "max_token_budget": 50000,
-      "acceptance_criteria": [
-        {
-          "id": "AC1",
-          "type": "command",
-          "description": "约束层自动拦截违规操作",
-          "payload": "python -c 'from system_constraint import SystemConstraint; SystemConstraint.route_task(\"coding\", spec)'"
-        },
-        {
-          "id": "AC2",
-          "type": "test",
-          "description": "约束层单元测试通过",
-          "payload": "pytest tests/test_system_constraint.py -v"
-        },
-        {
-          "id": "AC3",
-          "type": "assertion",
-          "description": "Hermes尝试编码被自动拦截",
-          "payload": "assert SystemConstraint.hermes_only_orchestration('coding') raises ConstraintViolation"
-        }
-      ],
-      "status": "passed",
-      "phase_completed": {
-        "develop": "2026-06-19",
-        "review": "2026-06-19",
-        "test": "2026-06-19"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 0,
-        "p2": 0,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 1004,
-        "tests_total": 1004,
-        "coverage": 90
-      }
-    },
-    {
-      "id": "F025",
-      "title": "建议模式调度层",
-      "description": "生成建议等待用户确认，不自动推进",
-      "owner": "Claude Code",
-      "wave": 9,
-      "dependencies": [
-        "F024",
-        "F013"
-      ],
-      "estimated_complexity": "medium",
-      "max_token_budget": 50000,
-      "acceptance_criteria": [
-        {
-          "id": "AC1",
-          "type": "command",
-          "description": "建议引擎生成建议",
-          "payload": "python -c 'from suggestion_engine import SuggestionEngine; se.suggest_next_phase(state)'"
-        },
-        {
-          "id": "AC2",
-          "type": "test",
-          "description": "建议引擎单元测试通过",
-          "payload": "pytest tests/test_suggestion_engine.py -v"
-        },
-        {
-          "id": "AC3",
-          "type": "assertion",
-          "description": "建议包含advance/blocker类型",
-          "payload": "assert suggestion['type'] in ['advance', 'blocker']"
-        }
-      ],
-      "status": "passed",
-      "phase_completed": {
-        "develop": "2026-06-19",
-        "review": "2026-06-19",
-        "test": "2026-06-19"
-      },
-      "review_result": {
-        "p0": 0,
-        "p1": 0,
-        "p2": 0,
-        "passed": true
-      },
-      "test_result": {
-        "tests_passed": 1004,
-        "tests_total": 1004,
-        "coverage": 90
-      }
+      "status": "pending"
     }
-  ]
+  ],
+  "wave_summary": {
+    "wave_1": {
+      "label": "基础层修复",
+      "features": ["R1", "R2"],
+      "description": "先统一真相源（R1），再统一队列（R2），后续任务依赖这两层。"
+    },
+    "wave_2": {
+      "label": "编排与治理",
+      "features": ["R3", "R4"],
+      "description": "R3 轻量化编排层；R4 增加 Inspector veto 治理机制。"
+    },
+    "wave_3": {
+      "label": "入口、持久化、适配器",
+      "features": ["R5", "R6", "R7"],
+      "description": "R5/R6/R7 互相独立，可并行开发。"
+    },
+    "wave_4": {
+      "label": "文档与最终验收",
+      "features": ["R8", "R9"],
+      "description": "R8 文档重写；R9 全量测试与质量门禁。"
+    }
+  }
 }

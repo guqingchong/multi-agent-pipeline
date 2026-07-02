@@ -122,7 +122,7 @@ class CircuitBreaker:
             result = fn(*args, **kwargs)
             self.record_success()
             return result
-        except Exception:
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError):
             self.record_failure()
             raise
 

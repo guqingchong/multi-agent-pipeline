@@ -1,11 +1,11 @@
-"""src/approval.py — 人机审批分级系统（三级审批+摘要生成）
+"""src/approval.py — Human-in-the-loop approval system (three-level approval + summary generation)
 
-实现 PRD 11.1-11.3 节定义的三级审批：
-  - 阻塞式（BlockingApproval）：Agent 暂停等待，30分钟超时后暂停保存状态
-  - 异步式（AsyncApproval）：Agent 继续做其他任务，2小时超时后跳过该操作
-  - 默认放行式（AutoApproval）：低风险操作，5分钟自动放行
+Implements the three-level approval defined in PRD sections 11.1-11.3:
+  - BlockingApproval: Agent pauses and waits, times out after 30 min then saves state
+  - AsyncApproval: Agent continues other tasks, times out after 2 hours then skips
+  - AutoApproval: Low-risk operations, auto-pass after 5 minutes
 
-支持审批上下文自动摘要生成（3-5行，包含关键数据）。
+Supports automatic summary generation for approval context (3-5 lines with key data).
 """
 
 from __future__ import annotations
@@ -17,11 +17,14 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from state_store import StateStore
+try:
+    from state_store import StateStore
+except ModuleNotFoundError:
+    from src.state_store import StateStore
 
 
 # ───────────────────────────────────────────────────────────────
-# 常量 / 配置
+# Constants / Config
 # ───────────────────────────────────────────────────────────────
 
 DEFAULT_BLOCKING_TIMEOUT = 30 * 60          # 30 分钟
@@ -32,44 +35,44 @@ SUMMARY_MAX_LENGTH = 200
 
 
 # ───────────────────────────────────────────────────────────────
-# 枚举 / 状态定义
+# Enums / State definitions
 # ───────────────────────────────────────────────────────────────
 
 class ApprovalLevel(Enum):
-    """审批级别"""
-    BLOCKING = auto()   # 阻塞式：Phase 1/5，30分钟超时
-    ASYNC = auto()      # 异步式：依赖安装/git push，2小时超时
-    AUTO = auto()       # 默认放行式：低风险操作，5分钟自动放行
+    """Approval level"""
+    BLOCKING = auto()   # 阻塞式：Phase 1/5，30分钟Timeout
+    ASYNC = auto()      # 异步式：依赖安装/git push，2小时Timeout
+    AUTO = auto()       # 默认放行式：Low-risk operation，5 minutes then auto-pass
 
 
 class ApprovalStatus(Enum):
-    """审批状态"""
+    """Approval status"""
     PENDING = auto()    # 等待审批
-    APPROVED = auto()   # 已批准
-    REJECTED = auto()   # 已拒绝
-    EXPIRED = auto()    # 已超时
+    APPROVED = auto()   # Approved
+    REJECTED = auto()   # Rejected
+    EXPIRED = auto()    # 已Timeout
     AUTO_PASSED = auto()  # 自动放行
-    SKIPPED = auto()    # 异步超时后跳过
+    SKIPPED = auto()    # 异步Timeout后跳过
 
 
 # ───────────────────────────────────────────────────────────────
-# 数据模型
+# Data models
 # ───────────────────────────────────────────────────────────────
 
 @dataclass
 class ApprovalContext:
-    """审批上下文"""
-    operation: str                        # 操作描述
-    level: ApprovalLevel                  # 审批级别
-    risk: str = "low"                     # 风险等级 low/medium/high
-    cost: float = 0.0                     # 预估成本（USD）
-    alternatives: List[str] = field(default_factory=list)  # 替代方案
-    metadata: Dict[str, Any] = field(default_factory=dict)  # 额外元数据
+    """Approval context"""
+    operation: str                        # Operation description
+    level: ApprovalLevel                  # Approval level
+    risk: str = "low"                     # Risk level low/medium/high
+    cost: float = 0.0                     # Estimated cost (USD)
+    alternatives: List[str] = field(default_factory=list)  # Alternative solutions
+    metadata: Dict[str, Any] = field(default_factory=dict)  # Extra metadata
 
 
 @dataclass
 class ApprovalRecord:
-    """审批记录"""
+    """Approval record"""
     id: str
     context: ApprovalContext
     status: ApprovalStatus
@@ -81,7 +84,7 @@ class ApprovalRecord:
 
 
 # ───────────────────────────────────────────────────────────────
-# 摘要生成
+# Summary generation
 # ───────────────────────────────────────────────────────────────
 
 def generate_summary(
@@ -91,41 +94,41 @@ def generate_summary(
     alternatives: Optional[List[str]] = None,
     max_length: int = SUMMARY_MAX_LENGTH,
 ) -> str:
-    """生成审批上下文自动摘要（3-5行，包含关键数据）
+    """Generate approval context auto-summary (3-5 lines with key data)
 
-    参数:
-        context: 审批上下文对象或基础信息
-        cost: 预估成本（USD）
-        risk: 风险等级
-        alternatives: 替代方案列表
-        max_length: 最大长度限制
+    Parameters:
+        context: Approval context object or base info
+        cost: Estimated cost (USD)
+        risk: Risk level
+        alternatives: Alternative solutions list
+        max_length: Maximum length limit
 
-    返回:
-        3-5 行的决策摘要字符串
+    Returns:
+        3-5 lines of decision summary string
     """
     lines: List[str] = []
-    lines.append(f"操作: {context.operation}")
-    lines.append(f"风险: {risk} | 预估成本: ${cost:.2f}")
+    lines.append(f"Operation: {context.operation}")
+    lines.append(f"Risk: {risk} | Est. cost: ${cost:.2f}")
 
     if alternatives:
         alt_str = ", ".join(alternatives[:3])
-        lines.append(f"替代方案: {alt_str}")
+        lines.append(f"Alternatives: {alt_str}")
 
-    # 根据级别添加超时信息
+    # Add timeout info by level
     if context.level == ApprovalLevel.BLOCKING:
-        lines.append("超时策略: 30分钟后暂停保存状态")
+        lines.append("Timeout policy: 30 minutes then pause and save state")
     elif context.level == ApprovalLevel.ASYNC:
-        lines.append("超时策略: 2小时后跳过该操作")
+        lines.append("Timeout policy: 2 hours then skip this operation")
     elif context.level == ApprovalLevel.AUTO:
-        lines.append("超时策略: 5分钟后自动放行")
+        lines.append("Timeout policy: 5 minutes then auto-pass")
 
-    # 推荐操作
+    # Recommendation
     if risk == "high":
-        lines.append("推荐: 请仔细审查后决定")
+        lines.append("Recommendation: Please review carefully before deciding")
     elif risk == "medium":
-        lines.append("推荐: 快速确认即可")
+        lines.append("Recommendation: Quick confirmation is sufficient")
     else:
-        lines.append("推荐: 低风险操作，可自动放行")
+        lines.append("Recommendation: Low-risk operation, can auto-pass")
 
     summary = "\n".join(lines)
     if len(summary) > max_length:
@@ -134,16 +137,16 @@ def generate_summary(
 
 
 # ───────────────────────────────────────────────────────────────
-# 基础审批类
+# Base approval class
 # ───────────────────────────────────────────────────────────────
 
 class BaseApproval:
-    """审批基类
+    """Approval base class
 
     职责：
-      1. 管理审批生命周期（请求 → 等待 → 决议）
-      2. 超时检测
-      3. 状态持久化（通过 state_store）
+      1. Manage approval lifecycle（request → wait → resolve）
+      2. Timeout detection
+      3. State persistence（通过 state_store）
     """
 
     def __init__(
@@ -159,11 +162,71 @@ class BaseApproval:
         self.store = store
         self._records: Dict[str, ApprovalRecord] = {}
         self._state_saved = False
+        # Load existing records from DB if store is available
+        if self.store is not None and self.project_id:
+            self._load_from_db()
+
+    def _load_from_db(self) -> None:
+        """Load approval records from SQLite store into memory cache."""
+        if self.store is None or not self.project_id:
+            return
+        db_records = self.store.list_approval_records(self.project_id)
+        for rec in db_records:
+            context = ApprovalContext(
+                operation=rec["operation"],
+                level=ApprovalLevel[rec["level"]] if rec["level"] in ApprovalLevel.__members__ else self.level,
+                risk=rec["risk"],
+                cost=rec["cost"],
+                alternatives=rec["alternatives"],
+                metadata=rec["metadata"],
+            )
+            record = ApprovalRecord(
+                id=rec["id"],
+                context=context,
+                status=ApprovalStatus[rec["status"]] if rec["status"] in ApprovalStatus.__members__ else ApprovalStatus.PENDING,
+                created_at=rec["created_at"],
+                resolved_at=rec["resolved_at"],
+                summary=rec["summary"],
+                project_id=rec["project_id"],
+                checkpoint_id=rec["checkpoint_id"],
+            )
+            self._records[record.id] = record
+
+    def _save_to_db(self, record: ApprovalRecord) -> None:
+        """Persist an approval record to the SQLite store."""
+        if self.store is None or not self.project_id:
+            return
+        self.store.save_approval_record(
+            record_id=record.id,
+            project_id=record.project_id or self.project_id,
+            operation=record.context.operation,
+            level=record.context.level.name,
+            risk=record.context.risk,
+            cost=record.context.cost,
+            alternatives=record.context.alternatives,
+            metadata=record.context.metadata,
+            status=record.status.name,
+            summary=record.summary,
+            created_at=record.created_at,
+            resolved_at=record.resolved_at,
+            checkpoint_id=record.checkpoint_id,
+        )
+
+    def _update_status_in_db(self, record: ApprovalRecord) -> None:
+        """Update an approval record's status in the SQLite store."""
+        if self.store is None or not self.project_id:
+            return
+        self.store.update_approval_status(
+            record_id=record.id,
+            status=record.status.name,
+            resolved_at=record.resolved_at,
+            checkpoint_id=record.checkpoint_id,
+        )
 
     # ── 核心 API ──
 
     def request(self, operation: str, **kwargs: Any) -> str:
-        """发起审批请求，返回审批记录 ID"""
+        """发起审批请求，返回Approval record ID"""
         record_id = f"approval_{int(time.time() * 1000)}"
         context = ApprovalContext(
             operation=operation,
@@ -188,10 +251,11 @@ class BaseApproval:
             project_id=self.project_id,
         )
         self._records[record_id] = record
+        self._save_to_db(record)
         return record_id
 
     def approve(self, record_id: str) -> bool:
-        """批准指定审批记录"""
+        """批准指定Approval record"""
         record = self._records.get(record_id)
         if record is None:
             return False
@@ -199,10 +263,11 @@ class BaseApproval:
             return False
         record.status = ApprovalStatus.APPROVED
         record.resolved_at = time.time()
+        self._update_status_in_db(record)
         return True
 
     def reject(self, record_id: str) -> bool:
-        """拒绝指定审批记录"""
+        """拒绝指定Approval record"""
         record = self._records.get(record_id)
         if record is None:
             return False
@@ -210,17 +275,18 @@ class BaseApproval:
             return False
         record.status = ApprovalStatus.REJECTED
         record.resolved_at = time.time()
+        self._update_status_in_db(record)
         return True
 
     def get_status(self, record_id: str) -> Optional[ApprovalStatus]:
-        """获取审批记录状态"""
+        """获取Approval record状态"""
         record = self._records.get(record_id)
         if record is None:
             return None
         return record.status
 
     def is_expired(self, record_id: str) -> bool:
-        """检查审批记录是否已超时"""
+        """检查Approval record是否已Timeout"""
         record = self._records.get(record_id)
         if record is None:
             return False
@@ -228,24 +294,24 @@ class BaseApproval:
         return elapsed > self.timeout
 
     def get_summary(self, record_id: str) -> str:
-        """获取审批摘要"""
+        """Get approval summary"""
         record = self._records.get(record_id)
         if record is None:
             return ""
         return record.summary
 
     def get_record(self, record_id: str) -> Optional[ApprovalRecord]:
-        """获取完整审批记录"""
+        """获取完整Approval record"""
         return self._records.get(record_id)
 
     def list_records(self) -> List[ApprovalRecord]:
-        """列出所有审批记录"""
+        """列出所有Approval record"""
         return list(self._records.values())
 
-    # ── 状态持久化 ──
+    # ── State persistence ──
 
     def save_state(self, record_id: str) -> bool:
-        """超时后将审批状态保存到 state_store"""
+        """Timeout后将Approval status保存到 state_store"""
         if self.store is None:
             return False
         record = self._records.get(record_id)
@@ -271,25 +337,26 @@ class BaseApproval:
         )
         record.checkpoint_id = checkpoint_id
         self._state_saved = True
+        self._update_status_in_db(record)
         return True
 
     def load_state(self, checkpoint_id: int) -> Optional[Dict[str, Any]]:
-        """从 checkpoint 恢复审批状态"""
+        """从 checkpoint 恢复Approval status"""
         if self.store is None:
             return None
         return self.store.restore_checkpoint(checkpoint_id)
 
 
 # ───────────────────────────────────────────────────────────────
-# 三级审批实现
+# Three-level approval implementation
 # ───────────────────────────────────────────────────────────────
 
 class BlockingApproval(BaseApproval):
-    """阻塞式审批
+    """Blocking approval
 
-    适用场景：Phase 1 架构设计、Phase 5 最终验收
-    行为：Agent 暂停等待
-    超时：30分钟后暂停并保存状态
+    Applicable scenario：Phase 1 architecture design, Phase 5 final acceptance
+    Behavior：Agent pauses and waits
+    Timeout：30minutes then pause and save state
     """
 
     def __init__(
@@ -306,31 +373,32 @@ class BlockingApproval(BaseApproval):
         )
 
     def check_and_timeout(self, record_id: str) -> Tuple[ApprovalStatus, str]:
-        """检查审批状态，超时后自动标记为 EXPIRED 并保存状态"""
+        """Check approval status, auto-mark EXPIRED and save state after timeout"""
         record = self._records.get(record_id)
         if record is None:
-            return ApprovalStatus.REJECTED, "记录不存在"
+            return ApprovalStatus.REJECTED, "Record does not exist"
 
         if record.status == ApprovalStatus.APPROVED:
-            return record.status, "已批准"
+            return record.status, "Approved"
         if record.status == ApprovalStatus.REJECTED:
-            return record.status, "已拒绝"
+            return record.status, "Rejected"
 
         if self.is_expired(record_id):
             record.status = ApprovalStatus.EXPIRED
             record.resolved_at = time.time()
             self.save_state(record_id)
-            return record.status, "超时已过期，状态已保存"
+            self._update_status_in_db(record)
+            return record.status, "Timed out, state saved"
 
-        return record.status, "等待审批中"
+        return record.status, "Waiting for approval"
 
 
 class AsyncApproval(BaseApproval):
-    """异步式审批
+    """Async approval
 
-    适用场景：依赖安装、git push
-    行为：Agent 继续做其他任务
-    超时：2小时后跳过该操作
+    Applicable scenario：Dependency install, git push
+    Behavior：Agent continues other tasks
+    Timeout：2hours then skip this operation
     """
 
     def __init__(
@@ -347,31 +415,32 @@ class AsyncApproval(BaseApproval):
         )
 
     def check_and_timeout(self, record_id: str) -> Tuple[ApprovalStatus, str]:
-        """检查审批状态，超时后自动标记为 SKIPPED"""
+        """Check approval status, auto-mark SKIPPED after timeout"""
         record = self._records.get(record_id)
         if record is None:
-            return ApprovalStatus.REJECTED, "记录不存在"
+            return ApprovalStatus.REJECTED, "Record does not exist"
 
         if record.status == ApprovalStatus.APPROVED:
-            return record.status, "已批准"
+            return record.status, "Approved"
         if record.status == ApprovalStatus.REJECTED:
-            return record.status, "已拒绝"
+            return record.status, "Rejected"
 
         if self.is_expired(record_id):
             record.status = ApprovalStatus.SKIPPED
             record.resolved_at = time.time()
             self.save_state(record_id)
-            return record.status, "超时已跳过，状态已保存"
+            self._update_status_in_db(record)
+            return record.status, "Timed out and skipped, state saved"
 
-        return record.status, "异步等待中，Agent 可继续其他任务"
+        return record.status, "Async waiting, Agent can continue other tasks"
 
 
 class AutoApproval(BaseApproval):
-    """默认放行式审批
+    """Auto approval
 
-    适用场景：低风险操作
-    行为：通知用户但不等待
-    超时：5分钟后自动放行
+    Applicable scenario：Low-risk operation
+    Behavior：Notify user but do not wait
+    Timeout：5minutes then auto-pass
     """
 
     def __init__(
@@ -388,31 +457,32 @@ class AutoApproval(BaseApproval):
         )
 
     def request(self, operation: str, **kwargs: Any) -> str:
-        """发起自动审批请求，5分钟后自动放行"""
+        """Initiate auto approval request, auto-pass after 5 minutes"""
         record_id = super().request(operation, **kwargs)
-        # 自动标记为待放行
+        # Auto-mark as pending pass
         return record_id
 
     def check_and_timeout(self, record_id: str) -> Tuple[ApprovalStatus, str]:
-        """检查审批状态，超时后自动标记为 AUTO_PASSED"""
+        """Check approval status, auto-mark AUTO_PASSED after timeout"""
         record = self._records.get(record_id)
         if record is None:
-            return ApprovalStatus.REJECTED, "记录不存在"
+            return ApprovalStatus.REJECTED, "Record does not exist"
 
         if record.status == ApprovalStatus.APPROVED:
-            return record.status, "已批准"
+            return record.status, "Approved"
         if record.status == ApprovalStatus.REJECTED:
-            return record.status, "已拒绝"
+            return record.status, "Rejected"
 
         if self.is_expired(record_id):
             record.status = ApprovalStatus.AUTO_PASSED
             record.resolved_at = time.time()
-            return record.status, "已自动放行"
+            self._update_status_in_db(record)
+            return record.status, "Auto-passed"
 
-        return record.status, "等待自动放行中"
+        return record.status, "Waiting for auto-pass"
 
     def auto_pass(self, record_id: str) -> bool:
-        """手动立即自动放行"""
+        """Manually auto-pass immediately"""
         record = self._records.get(record_id)
         if record is None:
             return False
@@ -424,7 +494,7 @@ class AutoApproval(BaseApproval):
 
 
 # ───────────────────────────────────────────────────────────────
-# 审批工厂
+# Approval factory
 # ───────────────────────────────────────────────────────────────
 
 def create_approval(
@@ -433,7 +503,7 @@ def create_approval(
     project_id: str = "",
     store: Optional[StateStore] = None,
 ) -> BaseApproval:
-    """根据级别创建对应的审批实例"""
+    """Create approval instance by level"""
     if level == ApprovalLevel.BLOCKING:
         return BlockingApproval(
             timeout=timeout or DEFAULT_BLOCKING_TIMEOUT,
@@ -452,11 +522,11 @@ def create_approval(
             project_id=project_id,
             store=store,
         )
-    raise ValueError(f"未知审批级别: {level}")
+    raise ValueError(f"Unknown approval level: {level}")
 
 
 # ───────────────────────────────────────────────────────────────
-# 便捷函数（供外部调用）
+# Convenience functions (for external use)
 # ───────────────────────────────────────────────────────────────
 
 def request_blocking_approval(
@@ -465,7 +535,7 @@ def request_blocking_approval(
     store: Optional[StateStore] = None,
     **kwargs: Any,
 ) -> Tuple[str, BlockingApproval]:
-    """发起阻塞式审批请求，返回 (record_id, approval_instance)"""
+    """发起Blocking approval请求，返回 (record_id, approval_instance)"""
     approval = BlockingApproval(project_id=project_id, store=store)
     record_id = approval.request(operation, **kwargs)
     return record_id, approval
@@ -477,10 +547,12 @@ def request_async_approval(
     store: Optional[StateStore] = None,
     **kwargs: Any,
 ) -> Tuple[str, AsyncApproval]:
-    """发起异步式审批请求，返回 (record_id, approval_instance)"""
+    """发起Async approval请求，返回 (record_id, approval_instance)"""
     approval = AsyncApproval(project_id=project_id, store=store)
     record_id = approval.request(operation, **kwargs)
     return record_id, approval
+
+
 
 
 def request_auto_approval(
@@ -489,7 +561,136 @@ def request_auto_approval(
     store: Optional[StateStore] = None,
     **kwargs: Any,
 ) -> Tuple[str, AutoApproval]:
-    """发起默认放行式审批请求，返回 (record_id, approval_instance)"""
+    """Initiate auto approval request, return (record_id, approval_instance)."""
     approval = AutoApproval(project_id=project_id, store=store)
     record_id = approval.request(operation, **kwargs)
     return record_id, approval
+
+
+class ApprovalMode(Enum):
+    """Approval mode: granular (per-operation) or blanket (user-wide authorization)."""
+    GRANULAR = auto()   # Each operation requires individual approval
+    BLANKET = auto()    # User grants blanket authorization; subsequent ops auto-approved
+
+
+class ApprovalSystem:
+    """Unified approval system supporting both granular and blanket modes.
+
+    Responsibilities:
+      1. Manage approval lifecycle (request → wait → resolve)
+      2. Support Granular mode (L1/L2/L3) and Blanket mode (user-wide auth)
+      3. Timeout detection and state persistence
+    """
+
+    def __init__(
+        self,
+        mode: ApprovalMode = ApprovalMode.GRANULAR,
+        project_id: str = "",
+        store: Optional[StateStore] = None,
+    ) -> None:
+        self.mode = mode
+        self.project_id = project_id
+        self.store = store
+        self._blanket_authorized = False
+        self._records: Dict[str, ApprovalRecord] = {}
+
+    def authorize_blanket(self) -> None:
+        """Enable blanket authorization (user grants overall approval)."""
+        self._blanket_authorized = True
+
+    def revoke_blanket(self) -> None:
+        """Revoke blanket authorization."""
+        self._blanket_authorized = False
+
+    
+    def _save_to_db(self, record: ApprovalRecord) -> None:
+        """Persist an approval record to the SQLite store."""
+        if self.store is None or not self.project_id:
+            return
+        self.store.save_approval_record(
+            record_id=record.id,
+            project_id=record.project_id or self.project_id,
+            operation=record.context.operation,
+            level=record.context.level.name,
+            risk=record.context.risk,
+            cost=record.context.cost,
+            alternatives=record.context.alternatives,
+            metadata=record.context.metadata,
+            status=record.status.name,
+            summary=record.summary,
+            created_at=record.created_at,
+            resolved_at=record.resolved_at,
+            checkpoint_id=record.checkpoint_id,
+        )
+    def is_blanket_authorized(self) -> bool:
+        """Return whether blanket authorization is active."""
+        return self._blanket_authorized
+
+    def request(self, operation: str, level: ApprovalLevel = ApprovalLevel.AUTO, **kwargs: Any) -> str:
+        """Request approval. In BLANKET mode, auto-approve if authorized."""
+        if self.mode == ApprovalMode.BLANKET and self._blanket_authorized:
+            record_id = f"approval_{int(time.time() * 1000)}"
+            context = ApprovalContext(
+                operation=operation,
+                level=level,
+                risk=kwargs.get("risk", "low"),
+                cost=kwargs.get("cost", 0.0),
+                alternatives=kwargs.get("alternatives", []),
+                metadata=kwargs.get("metadata", {}),
+            )
+            summary = generate_summary(context=context, cost=context.cost, risk=context.risk, alternatives=context.alternatives)
+            record = ApprovalRecord(
+                id=record_id,
+                context=context,
+                status=ApprovalStatus.AUTO_PASSED,
+                created_at=time.time(),
+                resolved_at=time.time(),
+                summary=summary,
+                project_id=self.project_id,
+            )
+            self._records[record_id] = record
+            self._save_to_db(record)
+            return record_id
+
+        # Granular mode: delegate to factory-created approval
+        approval = create_approval(level, project_id=self.project_id, store=self.store)
+        record_id = approval.request(operation, **kwargs)
+        self._records[record_id] = approval.get_record(record_id)  # type: ignore[arg-type]
+        return record_id
+
+    def approve(self, record_id: str) -> bool:
+        """Approve a specific record."""
+        record = self._records.get(record_id)
+        if record is None:
+            return False
+        if record.status != ApprovalStatus.PENDING:
+            return False
+        record.status = ApprovalStatus.APPROVED
+        record.resolved_at = time.time()
+        return True
+
+    def reject(self, record_id: str) -> bool:
+        """Reject a specific record."""
+        record = self._records.get(record_id)
+        if record is None:
+            return False
+        if record.status != ApprovalStatus.PENDING:
+            return False
+        record.status = ApprovalStatus.REJECTED
+        record.resolved_at = time.time()
+        return True
+
+    def get_status(self, record_id: str) -> Optional[ApprovalStatus]:
+        """Get record status."""
+        record = self._records.get(record_id)
+        if record is None:
+            return None
+        return record.status
+
+    def get_record(self, record_id: str) -> Optional[ApprovalRecord]:
+        """Get full record."""
+        return self._records.get(record_id)
+
+    def list_records(self) -> List[ApprovalRecord]:
+        """List all records."""
+        return list(self._records.values())

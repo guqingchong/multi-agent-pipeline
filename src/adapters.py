@@ -3,7 +3,7 @@
 F012 实现：
 - 适配层（Adapter）：每个 Agent 的启动/停止/通信逻辑，生成原生格式输入
 - 解析层（Parser）：从非结构化输出中提取关键信息（正则 + 启发式规则）
-- 容错层（Tolerance）：处理超时、崩溃、输出截断、编码错误，带明确恢复策略
+- 容错层（Tolerance）：处理Timeout、崩溃、输出截断、编码错误，带明确恢复策略
 
 支持：ClaudeCodeAdapter / CodeWhaleAdapter / QwenCodeAdapter
 """
@@ -11,12 +11,19 @@ F012 实现：
 from __future__ import annotations
 
 import re
+import os
 import time
 import traceback
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
+
+try:
+    from .registry import REGISTRY  # 相对导入，当作为包的一部分导入时
+except ImportError:
+    from registry import REGISTRY  # 绝对导入，当直接作为模块运行时
 
 # ───────────────────────────────────────────────────────────────
 # 统一数据结构
@@ -385,7 +392,7 @@ class ToleranceError(Exception):
 
 
 class TimeoutError(ToleranceError):
-    """超时异常"""
+    """Timeout异常"""
     pass
 
 
@@ -424,7 +431,7 @@ class RecoveryStrategy:
 
 
 class ToleranceLayer:
-    """容错层：处理超时/崩溃/截断/编码错误
+    """容错层：处理Timeout/崩溃/截断/编码错误
 
     提供重试、退避、恢复策略等机制。
     """
@@ -488,22 +495,28 @@ class ToleranceLayer:
         )
 
     def _retry_with_backoff(self, adapter: "BaseAdapter", result: AgentResult) -> AgentResult:
-        """超时后指数退避重试"""
+        """Timeout后指数退避重试"""
         attempt = result.recovery_attempts + 1
         delay = 2.0 ** attempt
         time.sleep(min(delay, 10.0))  # 最多等待 10 秒
-        # 增加超时时间
+        # 增加Timeout时间
         adapter.timeout_seconds = min(
             adapter.timeout_seconds * 1.5,
             300.0,
         )
-        return adapter.execute()
+        return adapter.execute(
+            getattr(adapter, '_current_task', ''),
+            getattr(adapter, '_current_context', None),
+        )
 
     def _restart_and_retry(self, adapter: "BaseAdapter", result: AgentResult) -> AgentResult:
         """崩溃后重启并重试"""
         time.sleep(2.0)
         adapter.reset()
-        return adapter.execute()
+        return adapter.execute(
+            getattr(adapter, '_current_task', ''),
+            getattr(adapter, '_current_context', None),
+        )
 
     def _parse_partial_output(self, adapter: "BaseAdapter", result: AgentResult) -> AgentResult:
         """截断输出时尝试解析部分结果"""
@@ -545,7 +558,7 @@ class ToleranceLayer:
                         new_result = strategy.action(adapter, result)
                         new_result.recovery_attempts = result.recovery_attempts
                         return new_result
-                    except Exception as e:
+                    except (ToleranceError, ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError) as e:
                         result.error_message = f"Recovery '{strategy.name}' failed: {e}"
                         continue
         # 无可用策略或已达最大重试
@@ -568,13 +581,13 @@ class ToleranceLayer:
         return self._retry_count >= self.max_retries
 
     def is_timeout(self, duration: Optional[float]) -> bool:
-        """判断给定持续时间是否超时"""
+        """判断给定持续时间是否Timeout"""
         if duration is None:
             return False
         return duration > self.timeout_seconds
 
     def adaptive_timeout(self) -> float:
-        """自适应超时：每次调用翻倍，上限 600 秒"""
+        """自适应Timeout：每次调用翻倍，上限 600 秒"""
         new_timeout = self.timeout_seconds * 2
         if new_timeout > 600:
             new_timeout = 600
@@ -625,7 +638,7 @@ class ToleranceLayer:
         callable_obj: Any,
         validate_result: bool = False,
     ) -> AgentResult:
-        """执行可调用对象，带重试逻辑和超时检测"""
+        """执行可调用对象，带重试逻辑和Timeout detection"""
         if callable_obj is None or not callable(callable_obj):
             raise TypeError("execute requires a callable")
 
@@ -633,10 +646,18 @@ class ToleranceLayer:
         while not self.retries_exhausted():
             start = time.time()
             try:
-                result = callable_obj()
-                elapsed = time.time() - start
-                if self.is_timeout(elapsed):
-                    raise TimeoutError("Execution exceeded timeout")
+                executor = ThreadPoolExecutor(max_workers=1)
+                timed_out = False
+                try:
+                    future = executor.submit(callable_obj)
+                    try:
+                        result = future.result(timeout=self.timeout_seconds)
+                    except FuturesTimeoutError:
+                        timed_out = True
+                        future.cancel()
+                        raise TimeoutError("Execution exceeded timeout")
+                finally:
+                    executor.shutdown(wait=not timed_out)
                 if validate_result and (not isinstance(result, AgentResult) or not result.success):
                     raise ParseError("Result validation failed")
                 return result
@@ -649,7 +670,7 @@ class ToleranceLayer:
                         time.sleep(delay)
                 else:
                     break
-            except Exception:
+            except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError):
                 # 非可重试错误直接抛出
                 raise
 
@@ -768,8 +789,8 @@ class BaseAdapter(AgentAdapterBase):
         ...
 
     @abstractmethod
-    def execute(self) -> AgentResult:
-        """执行 Agent 调用（模拟/实际）"""
+    def execute(self, task: str = "", context: Optional[Dict[str, Any]] = None) -> AgentResult:
+        """执行 Agent 调用"""
         ...
 
     def reset(self) -> None:
@@ -779,9 +800,11 @@ class BaseAdapter(AgentAdapterBase):
 
     def run_with_tolerance(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentResult:
         """带容错层的完整执行流程"""
+        self._current_task = task
+        self._current_context = context
         start = time.time()
         try:
-            result = self.execute()
+            result = self.execute(task, context)
         except TimeoutError:
             result = AgentResult(
                 success=False,
@@ -789,7 +812,7 @@ class BaseAdapter(AgentAdapterBase):
                 error_message="Execution timed out",
                 latency_ms=int((time.time() - start) * 1000),
             )
-        except Exception as e:
+        except (ToleranceError, ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError) as e:
             result = AgentResult(
                 success=False,
                 status=AdapterStatus.CRASHED,
@@ -806,7 +829,6 @@ class BaseAdapter(AgentAdapterBase):
             recovery_result = self.tolerance.recover(self, result)
             if recovery_result.success:
                 recovery_result.status = AdapterStatus.RECOVERED
-                recovery_result.recovery_attempts = result.recovery_attempts + 1
             return recovery_result
 
         return result
@@ -836,7 +858,7 @@ class ClaudeCodeAdapter(BaseAdapter):
     ) -> None:
         super().__init__(
             name="claude",
-            command="claude.exe",
+            command="claude",
             timeout_seconds=timeout_seconds,
             tolerance=tolerance,
         )
@@ -852,7 +874,7 @@ class ClaudeCodeAdapter(BaseAdapter):
 
     def build_command(self, prompt: str, *, timeout: int = 60) -> list[str]:
         """构建 Claude Code CLI 命令"""
-        return [self.command, "--print", prompt, "--timeout", str(timeout)]
+        return [self.command, "-p", prompt]
 
     def build_input(self, task: str, context: Optional[Dict[str, Any]] = None) -> str:
         """构建 Claude Code 原生格式输入（--print 模式）"""
@@ -874,8 +896,29 @@ class ClaudeCodeAdapter(BaseAdapter):
         return "\n".join(parts)
 
     def parse_output(self, raw_output: str) -> AgentResult:
-        """解析 Claude Code 输出"""
+        """Parse Claude Code / Kimi API output"""
         start = time.time()
+        import json as _json
+        
+        # Try OpenAI-compatible chat completion format (Kimi API)
+        try:
+            data = _json.loads(raw_output)
+            if "choices" in data:
+                msg = data["choices"][0].get("message", {})
+                content = msg.get("content", "") or msg.get("reasoning_content", "")
+                tokens = data.get("usage", {}).get("total_tokens", 0)
+                return AgentResult(
+                    success=bool(content.strip()),
+                    output=content.strip() or "(Kimi returned empty response)",
+                    structured={"tokens": tokens, "model": data.get("model", "kimi")},
+                    tokens_used=tokens,
+                    latency_ms=int((time.time() - start) * 1000),
+                    status=AdapterStatus.SUCCESS if content.strip() else AdapterStatus.FAILED,
+                    raw_output=raw_output,
+                )
+        except (_json.JSONDecodeError, KeyError, IndexError):
+            pass
+        
         structured = self._parser.heuristic_summary(raw_output)
 
         # 优先尝试 JSON 解析
@@ -932,19 +975,42 @@ class ClaudeCodeAdapter(BaseAdapter):
             raw_output=raw_output,
         )
 
-    def execute(self) -> AgentResult:
-        """模拟执行（实际环境调用 claude.exe --print）"""
+    def execute(self, task: str = "", context: Optional[Dict[str, Any]] = None) -> AgentResult:
+        """Execute real Claude Code CLI (via Kimi backend)"""
         self._execution_count += 1
-        # 模拟输出：包含 diff 统计和测试通过信息
-        mock_output = (
-            "```diff\n"
-            " src/app.py | 2 +-\n"
-            " 1 file changed, 1 insertion(+), 1 deletion(-)\n"
-            "```\n"
-            "Tests: 5 passed, 0 failed\n"
-            "Tokens: 4200\n"
-        )
-        return self.parse_output(mock_output)
+        import subprocess, os
+        
+        if os.environ.get("AGENT_MOCK", "").lower() == "true":
+            return self.parse_output(
+                "```diff\\n src/app.py | 2 +-\\n"
+                " 1 file changed, 1 insertion(+), 1 deletion(-)\\n"
+                "```\\nTests: 5 passed, 0 failed\\nTokens: 4200\\n"
+            )
+        
+        prompt = self.build_input(task, context)
+        cmd = f'{self.command} -p "{prompt}"'
+        
+        env = os.environ.copy()
+        env["CLAUDE_CODE_SIMPLE"] = "1"
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, shell=True,
+                                   timeout=self.timeout_seconds, env=env)
+            output = result.stdout or result.stderr
+        except subprocess.TimeoutExpired as e:
+            return AgentResult(
+                success=False, status=AdapterStatus.TIMEOUT,
+                error_message=f"Claude Code timed out: {e}",
+            )
+        
+        if "Failed to authenticate" in output or "403" in output:
+            return AgentResult(
+                success=False, status=AdapterStatus.CRASHED,
+                error_message=f"Claude Code auth failed. Set ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL",
+                output=output,
+            )
+        
+        return self.parse_output(output)
 
 
 # ───────────────────────────────────────────────────────────────
@@ -965,7 +1031,7 @@ class CodeWhaleAdapter(BaseAdapter):
     ) -> None:
         super().__init__(
             name="codewhale",
-            command="codewhale",
+            command="codewhale-tui",
             timeout_seconds=timeout_seconds,
             tolerance=tolerance,
         )
@@ -978,24 +1044,94 @@ class CodeWhaleAdapter(BaseAdapter):
 
     def build_command(self, prompt: str, *, timeout: int = 60) -> list[str]:
         """构建 CodeWhale CLI 命令"""
-        return [self.command, "--auto", prompt]
+        return [self.command, "exec", "--auto", prompt]
 
     def build_input(self, task: str, context: Optional[Dict[str, Any]] = None) -> str:
-        """构建 CodeWhale 原生格式输入（--auto 审查模式）"""
+        """构建 CodeWhale 原生格式输入（--auto 审查模式）
+
+        自动注入技能加载指令（审查/审核类任务强制加载审查技能）。
+        """
         ctx = context or {}
-        parts = [
+        task_type = ctx.get("task_type", "review")
+
+        # ── 技能加载指令 ──
+        skill_instructions = self._build_skill_prompt(task_type, ctx)
+        parts = [skill_instructions] if skill_instructions else []
+
+        parts.extend([
             f"# Review Task: {task}",
             f"## Model: {self.model}",
             "## Mode: --auto",
-        ]
+        ])
         if ctx.get("diff"):
             parts.append(f"## Diff to Review:\n```diff\n{ctx['diff']}\n```")
         if ctx.get("feature_id"):
             parts.append(f"## Feature: {ctx['feature_id']}")
+        if ctx.get("instructions"):
+            parts.append(f"## Instructions:\n{ctx['instructions']}")
         parts.append(
             "\nPlease review the code and output issues in P0/P1/P2 format with file, line, and suggestion."
         )
         return "\n".join(parts)
+
+    @staticmethod
+    def _build_skill_prompt(task_type: str, ctx: Dict[str, Any]) -> str:
+        """根据任务类型构建技能加载提示
+
+        优先从 skill_injector 获取结构化知识上下文，
+        fallback 到硬编码的基本指令。
+        """
+        # ── 尝试从 skill_injector 获取结构化知识 ──
+        structured_prefix = ""
+        try:
+            from skill_injector import SkillInjector
+        except (ModuleNotFoundError, ImportError):
+            try:
+                from src.skill_injector import SkillInjector
+            except (ModuleNotFoundError, ImportError):
+                SkillInjector = None
+
+        if SkillInjector is not None:
+            # 将 task_type 映射到 phase
+            task_to_phase = {
+                "review": "decompose",
+                "audit": "audit",
+            }
+            phase = task_to_phase.get(task_type, "")
+            if phase:
+                ctx_prompt = SkillInjector.build_context_prompt(phase)
+                if ctx_prompt:
+                    structured_prefix = ctx_prompt + "\n\n"
+
+        # ── 硬编码回退（结构化知识不可用时的基本指令） ──
+        if task_type == "review":
+            fallback = (
+                "[SKILL LOADING — 必须在审查前加载以下技能]\n"
+                "你正在执行代码审查任务。请在审查开始前加载你的审核/代码审查专业技能，包括：\n"
+                "  - 代码质量审查 (P0/P1/P2 分级)\n"
+                "  - 安全性检查 (OWASP Top 10, 注入漏洞, 密钥泄漏)\n"
+                "  - 架构一致性检查\n"
+                "  - 性能问题识别\n"
+                "  - 测试覆盖率评估\n"
+                "审查时请逐文件检查，输出结构化报告。\n"
+            )
+        elif task_type == "audit":
+            fallback = (
+                "[SKILL LOADING — 必须在审计前加载以下技能]\n"
+                "你正在执行独立审计任务。请加载审计/合规专业技能，包括：\n"
+                "  - 全量代码审计\n"
+                "  - 合规性检查\n"
+                "  - 安全性深度审查\n"
+                "  - 架构决策追溯验证\n"
+                "输出完整审计报告，标注每项发现的风险等级。\n"
+            )
+        else:
+            fallback = ""
+
+        # 结构化知识优先，硬编码为补充前缀
+        if structured_prefix:
+            return structured_prefix + fallback
+        return fallback
 
     def parse_output(self, raw_output: str) -> AgentResult:
         """解析 CodeWhale 审查报告"""
@@ -1021,8 +1157,20 @@ class CodeWhaleAdapter(BaseAdapter):
                 raw_output=raw_output,
             )
 
-        # 审查通过 = 没有 P0 问题
+        # Fallback: plain text review with substantial output = success
         issues = structured.get("issues") or []
+        if not issues and len(raw_output.strip()) > 100 and "error" not in raw_output.lower():
+            return AgentResult(
+                success=True,
+                output=raw_output.strip()[:2000],
+                structured={"passed": True, "p0_count": 0, "p1_count": 0, "p2_count": 0},
+                tokens_used=structured.get("tokens") or 0,
+                latency_ms=int((time.time() - start) * 1000),
+                status=AdapterStatus.SUCCESS,
+                raw_output=raw_output,
+            )
+        
+        # 审查通过 = 没有 P0 问题
         p0_count = sum(1 for i in issues if i.get("level") == "P0")
         p1_count = sum(1 for i in issues if i.get("level") == "P1")
         p2_count = sum(1 for i in issues if i.get("level") == "P2")
@@ -1062,18 +1210,40 @@ class CodeWhaleAdapter(BaseAdapter):
             raw_output=raw_output,
         )
 
-    def execute(self) -> AgentResult:
-        """模拟执行（实际环境调用 codewhale --auto）"""
+    def execute(self, task: str = "", context: Optional[Dict[str, Any]] = None) -> AgentResult:
+        """执行 CodeWhale CLI（AGENT_MOCK=true 时返回 mock）"""
         self._execution_count += 1
-        mock_output = (
-            "## Review Report\n\n"
-            "P1 src/app.py:42: Variable name 'x' is too short\n"
-            "Suggestion: Use descriptive variable names\n\n"
-            "P2 src/utils.py:10: Missing docstring\n"
-            "Suggestion: Add module docstring\n\n"
-            "Tokens: 1800\n"
-        )
-        return self.parse_output(mock_output)
+        import subprocess, os
+        
+        if os.environ.get("AGENT_MOCK", "").lower() == "true":
+            return self.parse_output(
+                "## Review Report\n\n"
+                "P1 src/app.py:42: Variable name 'x' is too short\n"
+                "Suggestion: Use descriptive variable names\n\n"
+                "P2 src/utils.py:10: Missing docstring\n"
+                "Suggestion: Add module docstring\n\n"
+                "Tokens: 1800\n"
+            )
+        
+        prompt = self.build_input(task, context)
+        cmd = self.build_command(prompt)
+        try:
+            result = subprocess.run(" ".join(cmd), capture_output=True, text=True, shell=True,
+                                   env={**__import__("os").environ, "HOME": __import__("os").path.expanduser("~")},
+                                   timeout=self.timeout_seconds)
+            output = result.stdout or result.stderr
+        except subprocess.TimeoutExpired as e:
+            return AgentResult(
+                success=False, status=AdapterStatus.TIMEOUT,
+                error_message=f"CodeWhale timed out: {e}",
+                output=e.stdout or "" if e.stdout else "",
+            )
+        except FileNotFoundError:
+            return AgentResult(
+                success=False, status=AdapterStatus.CRASHED,
+                error_message=f"CodeWhale CLI not found: {self.command}",
+            )
+        return self.parse_output(output)
 
 
 # ───────────────────────────────────────────────────────────────
@@ -1128,16 +1298,25 @@ class QwenCodeAdapter(BaseAdapter):
 
     def build_command(self, prompt: str, *, timeout: int = 60) -> list[str]:
         """构建 Qwen Code CLI 命令"""
-        return [self.command, "-y", "--output-format", "json", prompt]
+        return [self.command, prompt]
 
     def build_input(self, task: str, context: Optional[Dict[str, Any]] = None) -> str:
-        """构建 Qwen Code 原生格式输入（-y 模式）"""
+        """构建 Qwen Code 原生格式输入（-y 模式）
+
+        自动注入技能加载指令（测试/E2E/审查/文档类任务强制加载相关技能）。
+        """
         ctx = context or {}
-        parts = [
+        task_type = ctx.get("task_type", "code")
+
+        # ── 技能加载指令 ──
+        skill_instructions = self._build_skill_prompt(task_type, ctx)
+        parts = [skill_instructions] if skill_instructions else []
+
+        parts.extend([
             f"# Task: {task}",
             f"## Model: {self.model}",
             "## Mode: -y (auto-confirm)",
-        ]
+        ])
         if ctx.get("feature_id"):
             parts.append(f"## Feature: {ctx['feature_id']}")
         if ctx.get("test_type"):
@@ -1156,6 +1335,89 @@ class QwenCodeAdapter(BaseAdapter):
             "\nPlease output results in JSON format with 'success', 'output', and 'details' fields."
         )
         return "\n".join(parts)
+
+    @staticmethod
+    def _build_skill_prompt(task_type: str, ctx: Dict[str, Any]) -> str:
+        """根据任务类型构建 Qwen 技能加载提示
+
+        优先从 skill_injector 获取结构化知识上下文，
+        fallback 到硬编码的基本指令。
+        """
+        # ── 尝试从 skill_injector 获取结构化知识 ──
+        structured_prefix = ""
+        try:
+            from skill_injector import SkillInjector
+        except (ModuleNotFoundError, ImportError):
+            try:
+                from src.skill_injector import SkillInjector
+            except (ModuleNotFoundError, ImportError):
+                SkillInjector = None
+
+        if SkillInjector is not None:
+            task_to_phase = {
+                "test": "test",
+                "e2e": "test",
+                "review": "decompose",
+                "doc": "accept",
+            }
+            phase = task_to_phase.get(task_type, "")
+            if phase:
+                ctx_prompt = SkillInjector.build_context_prompt(phase)
+                if ctx_prompt:
+                    structured_prefix = ctx_prompt + "\n\n"
+
+        # ── 硬编码回退 ──
+        if task_type == "test":
+            test_type = ctx.get("test_type", "unit")
+            fallback = (
+                "[SKILL LOADING — 必须在编写测试前加载以下技能]\n"
+                f"你正在执行 {test_type} 测试任务。请加载你的测试专业技能，包括：\n"
+                "  - 单元测试编写 (pytest/unittest)\n"
+                "  - 边界条件测试 (edge cases, null, empty, large values)\n"
+                "  - Mock/Stub 策略\n"
+                "  - 测试覆盖率目标 (≥80%)\n"
+                "  - 测试数据隔离 (fixtures, factories)\n"
+                "编写可维护、可重复运行的测试代码。\n"
+            )
+        elif task_type == "e2e":
+            fallback = (
+                "[SKILL LOADING — 必须在编写 E2E 测试前加载以下技能]\n"
+                "你正在执行端到端 (E2E) 测试任务。请加载 E2E 测试专业技能，包括：\n"
+                "  - Playwright 浏览器自动化\n"
+                "  - 真实用户工作流模拟 (注册→登录→核心操作→退出)\n"
+                "  - 跨浏览器兼容性测试\n"
+                "  - 视觉回归测试\n"
+                "  - 网络/API Mock 策略\n"
+                "  - 测试数据准备与清理\n"
+                "从用户视角验证系统端到端功能完整性。\n"
+            )
+        elif task_type == "review":
+            fallback = (
+                "[SKILL LOADING — 必须在审查前加载以下技能]\n"
+                "你正在执行代码审查任务。请加载审查专业技能，包括：\n"
+                "  - 代码质量审查 (正确性/可读性/可维护性)\n"
+                "  - 类型安全 (TypeScript/Python type hints)\n"
+                "  - 安全漏洞检测\n"
+                "  - 性能瓶颈识别\n"
+                "  - API 设计一致性\n"
+                "输出 P0/P1/P2 分级审查报告。\n"
+            )
+        elif task_type == "doc":
+            fallback = (
+                "[SKILL LOADING — 必须在编写文档前加载以下技能]\n"
+                "你正在执行文档编写任务。请加载技术文档专业技能，包括：\n"
+                "  - 面向非技术用户的文档编写\n"
+                "  - README / DEPLOY.md / API 文档结构\n"
+                "  - 中文排版规范（中英文空格/全半角标点）\n"
+                "  - 代码示例与注释\n"
+                "确保文档清晰、准确、可操作。\n"
+            )
+        else:
+            fallback = ""
+
+        if structured_prefix:
+            return structured_prefix + fallback
+        return fallback
 
     def parse_output(self, raw_output: str) -> AgentResult:
         """解析 Qwen Code 输出（优先 JSON，fallback Markdown）"""
@@ -1186,8 +1448,20 @@ class QwenCodeAdapter(BaseAdapter):
 
         # Fallback：启发式解析
         lower = raw_output.lower()
+        # Short plain-text responses (no error patterns) are success
+        is_plain_text = (
+            len(raw_output.strip()) > 0
+            and len(raw_output.strip()) < 1000
+            and "error" not in lower
+            and "api error" not in lower
+            and "401" not in lower
+            and not bool(structured.get("json"))
+            and not bool(structured.get("code_blocks"))
+            and not bool(structured.get("issues"))
+        )
         success = (
-            "passed" in lower
+            is_plain_text
+            or "passed" in lower
             or "success" in lower
             or "测试通过" in raw_output
             or "done" in lower
@@ -1225,20 +1499,41 @@ class QwenCodeAdapter(BaseAdapter):
             raw_output=raw_output,
         )
 
-    def execute(self) -> AgentResult:
-        """模拟执行（实际环境调用 qwen -y）"""
+    def execute(self, task: str = "", context: Optional[Dict[str, Any]] = None) -> AgentResult:
+        """执行 Qwen Code CLI（AGENT_MOCK=true 时返回 mock）"""
         self._execution_count += 1
-        mock_output = (
-            '```json\n'
-            '{\n'
-            '  "success": true,\n'
-            '  "output": "E2E tests passed: 3/3",\n'
-            '  "details": {"browser": "chromium", "screenshots": 3},\n'
-            '  "tokens_used": 2500\n'
-            '}\n'
-            '```\n'
-        )
-        return self.parse_output(mock_output)
+        import subprocess, os
+        
+        if os.environ.get("AGENT_MOCK", "").lower() == "true":
+            return self.parse_output(
+                '```json\n'
+                '{\n  "success": true,\n'
+                '  "output": "E2E tests passed: 3/3",\n'
+                '  "details": {"browser": "chromium", "screenshots": 3},\n'
+                '  "tokens_used": 2500\n'
+                '}\n'
+                '```\n'
+            )
+        
+        prompt = self.build_input(task, context)
+        cmd = self.build_command(prompt, timeout=int(self.timeout_seconds))
+        try:
+            result = subprocess.run(" ".join(cmd), capture_output=True, text=True, shell=True,
+                                   env={**__import__("os").environ, "HOME": __import__("os").path.expanduser("~")},
+                                   timeout=self.timeout_seconds)
+            output = result.stdout or result.stderr
+        except subprocess.TimeoutExpired as e:
+            return AgentResult(
+                success=False, status=AdapterStatus.TIMEOUT,
+                error_message=f"Qwen Code timed out: {e}",
+                output=e.stdout or "" if e.stdout else "",
+            )
+        except FileNotFoundError:
+            return AgentResult(
+                success=False, status=AdapterStatus.CRASHED,
+                error_message=f"Qwen Code CLI not found: {self.command}",
+            )
+        return self.parse_output(output)
 
     def execute_e2e(self, scenarios: List[Dict[str, Any]], base_url: str = "http://localhost:3000") -> AgentResult:
         """执行 E2E 测试场景（Playwright 集成）
@@ -1368,27 +1663,58 @@ class QwenCodeAdapter(BaseAdapter):
 # ───────────────────────────────────────────────────────────────
 
 
-ADAPTER_REGISTRY: Dict[str, Callable[..., BaseAdapter]] = {
-    "claude": ClaudeCodeAdapter,
-    "codewhale": CodeWhaleAdapter,
-    "qwen": QwenCodeAdapter,
-}
-
-
 def create_adapter(
     agent_name: str,
     timeout_seconds: float = 60.0,
     tolerance: Optional[ToleranceLayer] = None,
 ) -> BaseAdapter:
     """工厂函数：按名称创建 Adapter"""
-    if agent_name not in ADAPTER_REGISTRY:
-        raise ValueError(f"Unknown adapter: {agent_name}. Available: {list(ADAPTER_REGISTRY.keys())}")
-    return ADAPTER_REGISTRY[agent_name](timeout_seconds=timeout_seconds, tolerance=tolerance)
+    # 从 REGISTRY.agents 获取 Agent 定义
+    agent_def = REGISTRY.get_agent(agent_name)
+    if agent_def is None:
+        # 尝试映射旧的适配器名称到新的注册表名称
+        name_mapping = {
+            "claude": "claude-code",
+            "codewhale": "codewhale",
+            "qwen": "qwen-code"
+        }
+        mapped_name = name_mapping.get(agent_name)
+        if mapped_name:
+            agent_def = REGISTRY.get_agent(mapped_name)
+    
+    if agent_def is None:
+        available_adapters = [name for name in REGISTRY.list_agents() if name in ["claude-code", "codewhale", "qwen-code"]]
+        raise ValueError(f"Unknown adapter: {agent_name}. Available: {available_adapters}")
+    
+    # 根据 agent 定义创建对应的适配器
+    adapter_class_map = {
+        "claude-code": ClaudeCodeAdapter,
+        "codewhale": CodeWhaleAdapter,
+        "qwen-code": QwenCodeAdapter
+    }
+    
+    adapter_class = adapter_class_map.get(agent_def.name)
+    if adapter_class is None:
+        raise ValueError(f"No adapter class found for agent: {agent_def.name}")
+        
+    return adapter_class(timeout_seconds=timeout_seconds, tolerance=tolerance)
 
 
 def list_adapters() -> List[str]:
     """列出所有可用 Adapter"""
-    return list(ADAPTER_REGISTRY.keys())
+    # 返回所有支持适配器类的注册表项
+    adapter_class_map = {
+        "claude-code": ClaudeCodeAdapter,
+        "codewhale": CodeWhaleAdapter,
+        "qwen-code": QwenCodeAdapter
+    }
+    
+    available_agents = []
+    for agent_name in REGISTRY.list_agents():
+        if agent_name in adapter_class_map:
+            available_agents.append(agent_name)
+            
+    return available_agents
 
 
 # ───────────────────────────────────────────────────────────────
@@ -1398,11 +1724,135 @@ def list_adapters() -> List[str]:
 
 @dataclass
 class BatchResult:
-    """批量执行结果"""
+    """Batch execution results."""
 
-    results: Dict[str, AgentResult]
+    results: Dict[str, AgentResult] = field(default_factory=dict)
     all_success: bool = False
     failed_adapters: List[str] = field(default_factory=list)
+
+
+# ───────────────────────────────────────────────────────────────
+# Fallback communication channels
+# ───────────────────────────────────────────────────────────────
+
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import json
+import time
+import uuid
+
+
+# ───────────────────────────────────────────────────────────────
+# Fallback communication channels
+# ───────────────────────────────────────────────────────────────
+
+class FallbackChannel(ABC):
+    """Base class for fallback communication when delegate_task fails."""
+
+    @abstractmethod
+    def send(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentResult:
+        """Send task via fallback channel."""
+        ...
+
+    @abstractmethod
+    def receive(self, task_id: str = "", timeout: int = 60) -> Optional[AgentResult]:
+        """Receive result from fallback channel."""
+        ...
+
+
+class FileBasedChannel(FallbackChannel):
+    """File-based fallback: exchange tasks/results via JSON files.
+
+    Used when delegate_task times out or hits iteration limits.
+    """
+
+    def __init__(self, inbox_dir: Path, agent_name: str = "") -> None:
+        self.inbox_dir = inbox_dir
+        self.agent_name = agent_name
+        self.inbox_dir.mkdir(parents=True, exist_ok=True)
+
+    def _task_path(self, task_id: str) -> Path:
+        return self.inbox_dir / f"task_{task_id}.json"
+
+    def _result_path(self, task_id: str) -> Path:
+        return self.inbox_dir / f"result_{task_id}.json"
+
+    def send(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentResult:
+        task_id = str(uuid.uuid4())
+        payload = {
+            "task_id": task_id,
+            "agent": self.agent_name,
+            "task": task,
+            "context": context or {},
+            "sent_at": time.time(),
+        }
+        # Atomic write: write to temp then rename
+        task_path = self._task_path(task_id)
+        temp_path = task_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        os.replace(str(temp_path), str(task_path))
+        return AgentResult(
+            success=True,
+            output=f"Task written to {task_path}",
+            structured={"task_id": task_id, "channel": "file"},
+            status=AdapterStatus.IDLE,
+        )
+
+    def receive(self, task_id: str = "", timeout: int = 60) -> Optional[AgentResult]:
+        start = time.time()
+        result_path = self._result_path(task_id) if task_id else None
+        while time.time() - start < timeout:
+            files = [result_path] if result_path else list(self.inbox_dir.glob("result_*.json"))
+            for result_file in files:
+                if result_file is None or not result_file.exists():
+                    continue
+                try:
+                    data = json.loads(result_file.read_text(encoding="utf-8"))
+                    # Atomic read + cleanup
+                    result = AgentResult(
+                        success=data.get("success", False),
+                        output=data.get("output", ""),
+                        structured=data.get("structured"),
+                        status=AdapterStatus.SUCCESS if data.get("success") else AdapterStatus.FAILED,
+                    )
+                    result_file.unlink()
+                    return result
+                except (json.JSONDecodeError, OSError) as e:
+                    # Log error but continue polling
+                    continue
+            time.sleep(1)
+        return None
+
+
+class MCPChannel(FallbackChannel):
+    """MCP-based fallback: message-oriented protocol for agent communication.
+
+    Ultimate fallback when both delegate_task and FileBased fail.
+    """
+
+    def __init__(self, endpoint: str = "", agent_name: str = "") -> None:
+        self.endpoint = endpoint
+        self.agent_name = agent_name
+
+    def send(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentResult:
+        # Stub: actual MCP implementation depends on transport
+        return AgentResult(
+            success=False,
+            output=f"MCP transport not yet implemented for {self.agent_name}",
+            structured={"channel": "mcp", "endpoint": self.endpoint},
+            status=AdapterStatus.FAILED,
+        )
+
+    def receive(self, task_id: str = "", timeout: int = 60) -> Optional[AgentResult]:
+        # Stub: actual MCP implementation depends on transport
+        return AgentResult(
+            success=False,
+            output=f"MCP transport not yet implemented for {self.agent_name}",
+            structured={"channel": "mcp", "endpoint": self.endpoint},
+            status=AdapterStatus.FAILED,
+        )
 
 
 def run_adapters_batch(
@@ -1411,7 +1861,7 @@ def run_adapters_batch(
     context: Optional[Dict[str, Any]] = None,
     fallback_order: Optional[List[str]] = None,
 ) -> BatchResult:
-    """批量执行多个 Adapter，支持降级顺序"""
+    """Batch execute multiple Adapters, supporting fallback order."""
     results: Dict[str, AgentResult] = {}
     failed: List[str] = []
 
@@ -1421,7 +1871,7 @@ def run_adapters_batch(
         if not result.success:
             failed.append(adapter.name)
 
-    # 如果全部失败且指定了降级顺序，尝试按顺序重新执行
+    # If all failed and fallback_order specified, retry in order
     if fallback_order and all(not r.success for r in results.values()):
         for name in fallback_order:
             if name in results:

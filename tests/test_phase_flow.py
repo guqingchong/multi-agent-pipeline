@@ -285,6 +285,42 @@ def accept_project(test_project: tuple[str, Path]) -> tuple[str, Path]:
     conn.commit()
     conn.close()
 
+
+    # 确保 git 主分支存在（需要至少一个 commit）
+    import subprocess
+    git_dir = proj_dir / ".git"
+    if git_dir.exists():
+        subprocess.run(
+            ["git", "-C", str(proj_dir), "add", "-A"],
+            capture_output=True, timeout=10,
+        )
+        subprocess.run(
+            ["git", "-C", str(proj_dir), "commit", "-m", "init commit"],
+            capture_output=True, timeout=10,
+        )
+        subprocess.run(
+            ["git", "-C", str(proj_dir), "branch", "-M", "main"],
+            capture_output=True, timeout=10,
+        )
+
+    # 创建 E2E 测试脚本（输出 JSON 评分，grade 不为 D/F）
+    e2e_dir = proj_dir / "tests" / "e2e"
+    e2e_dir.mkdir(parents=True, exist_ok=True)
+    (e2e_dir / "test_e2e_accept.py").write_text(
+        'import json\nprint(json.dumps({"grade": "B", "total": 8}))\n',
+        encoding="utf-8",
+    )
+
+    # 创建 E2E 基准库文件
+    benchmark_dir = Path.home() / ".hermes"
+    benchmark_dir.mkdir(parents=True, exist_ok=True)
+    benchmark_path = benchmark_dir / "e2e-benchmark.json"
+    benchmark_path.write_text(
+        json.dumps({"project_averages": {project_name: {"avg_total": 7.0}}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
     return project_name, base_dir
 
 
@@ -393,34 +429,37 @@ def test_phase_flow_advance_design_to_decompose(design_project: tuple[str, Path]
     assert flow.current_phase() == "decompose"
 
 
-def test_phase_flow_advance_decompose_to_develop(decompose_project: tuple[str, Path]) -> None:
+def test_phase_flow_advance_decompose_to_research(decompose_project: tuple[str, Path]) -> None:
+    """v3.0: decompose → research（12 Phase 顺序）"""
     project_name, base_dir = decompose_project
     flow = PhaseFlow(project_name, base_dir)
     passed, msg = flow.advance()
     assert passed is True
     assert "decompose" in msg
-    assert "develop" in msg
-    assert flow.current_phase() == "develop"
+    assert "research" in msg
+    assert flow.current_phase() == "research"
 
 
-def test_phase_flow_advance_develop_to_test(develop_project: tuple[str, Path]) -> None:
+def test_phase_flow_advance_develop_to_integrate(develop_project: tuple[str, Path]) -> None:
+    """v3.0: develop → integrate"""
     project_name, base_dir = develop_project
     flow = PhaseFlow(project_name, base_dir)
     passed, msg = flow.advance()
     assert passed is True
     assert "develop" in msg
-    assert "test" in msg
-    assert flow.current_phase() == "test"
+    assert "integrate" in msg
+    assert flow.current_phase() == "integrate"
 
 
-def test_phase_flow_advance_test_to_accept(test_project: tuple[str, Path]) -> None:
+def test_phase_flow_advance_test_to_evaluate(test_project: tuple[str, Path]) -> None:
+    """v3.0: test → evaluate"""
     project_name, base_dir = test_project
     flow = PhaseFlow(project_name, base_dir)
     passed, msg = flow.advance()
     assert passed is True
     assert "test" in msg
-    assert "accept" in msg
-    assert flow.current_phase() == "accept"
+    assert "evaluate" in msg
+    assert flow.current_phase() == "evaluate"
 
 
 def test_phase_flow_advance_accept_to_deploy(accept_project: tuple[str, Path]) -> None:

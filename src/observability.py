@@ -18,6 +18,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+try:
+    from config import get_config
+except (ModuleNotFoundError, ImportError):
+    from src.config import get_config
+
 from src.state_store import StateStore, TraceRecord, AuditLogRecord, CheckpointRecord
 
 
@@ -71,7 +76,7 @@ class ObservabilityStore:
 
     def __init__(self, db_path: Path) -> None:
         if db_path.is_dir():
-            db_path = db_path / "pipeline_state.db"
+            db_path = db_path / get_config().db_name
         self.db_path = db_path
 
     def _conn(self) -> sqlite3.Connection:

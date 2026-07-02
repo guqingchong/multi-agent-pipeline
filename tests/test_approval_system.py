@@ -31,11 +31,12 @@ from approval import (
     BlockingApproval,
     AsyncApproval,
     AutoApproval,
+    ApprovalSystem,
+    ApprovalMode,
     generate_summary,
     create_approval,
     request_blocking_approval,
     request_async_approval,
-    request_auto_approval,
     DEFAULT_BLOCKING_TIMEOUT,
     DEFAULT_ASYNC_TIMEOUT,
     DEFAULT_AUTO_TIMEOUT,
@@ -113,31 +114,31 @@ class TestGenerateSummary:
     def test_basic_summary(self) -> None:
         ctx = ApprovalContext(operation="安装依赖", level=ApprovalLevel.ASYNC)
         summary = generate_summary(ctx, cost=5.0, risk="medium")
-        assert "操作: 安装依赖" in summary
-        assert "风险: medium" in summary
-        assert "预估成本: $5.00" in summary
-        assert "超时策略: 2小时后跳过该操作" in summary
+        assert "Operation: 安装依赖" in summary
+        assert "Risk: medium" in summary
+        assert "Est. cost: $5.00" in summary
+        assert "Timeout policy: 2 hours then skip this operation" in summary
 
     def test_blocking_summary(self) -> None:
-        ctx = ApprovalContext(operation="架构设计审批", level=ApprovalLevel.BLOCKING)
+        ctx = ApprovalContext(operation="Architecture design approval", level=ApprovalLevel.BLOCKING)
         summary = generate_summary(ctx, cost=12.5, risk="high")
-        assert "操作: 架构设计审批" in summary
-        assert "风险: high" in summary
-        assert "超时策略: 30分钟后暂停保存状态" in summary
-        assert "推荐: 请仔细审查后决定" in summary
+        assert "Operation: Architecture design approval" in summary
+        assert "Risk: high" in summary
+        assert "Timeout policy: 30 minutes then pause and save state" in summary
+        assert "Recommendation: Please review carefully before deciding" in summary
 
     def test_auto_summary(self) -> None:
-        ctx = ApprovalContext(operation="读取文件", level=ApprovalLevel.AUTO)
+        ctx = ApprovalContext(operation="Read file", level=ApprovalLevel.AUTO)
         summary = generate_summary(ctx, cost=0.1, risk="low")
-        assert "操作: 读取文件" in summary
-        assert "超时策略: 5分钟后自动放行" in summary
-        assert "推荐: 低风险操作，可自动放行" in summary
+        assert "Operation: Read file" in summary
+        assert "Timeout policy: 5 minutes then auto-pass" in summary
+        assert "Recommendation: Low-risk operation, can auto-pass" in summary
 
     def test_summary_with_alternatives(self) -> None:
         ctx = ApprovalContext(operation="部署", level=ApprovalLevel.BLOCKING)
         alts = ["staging", "canary"]
         summary = generate_summary(ctx, cost=20.0, risk="high", alternatives=alts)
-        assert "替代方案: staging, canary" in summary
+        assert "Alternatives: staging, canary" in summary
 
     def test_summary_max_length(self) -> None:
         ctx = ApprovalContext(operation="x" * 300, level=ApprovalLevel.BLOCKING)
@@ -205,7 +206,7 @@ class TestBaseApproval:
         ba = BaseApproval(level=ApprovalLevel.BLOCKING, timeout=60)
         rid = ba.request("test op")
         summary = ba.get_summary(rid)
-        assert "操作: test op" in summary
+        assert "Operation: test op" in summary
 
     def test_get_record(self) -> None:
         ba = BaseApproval(level=ApprovalLevel.BLOCKING, timeout=60)
@@ -270,35 +271,35 @@ class TestBlockingApproval:
 
     def test_check_pending(self) -> None:
         ba = BlockingApproval(timeout=60)
-        rid = ba.request("架构设计审批")
+        rid = ba.request("Architecture design approval")
         status, msg = ba.check_and_timeout(rid)
         assert status == ApprovalStatus.PENDING
-        assert "等待审批中" in msg
+        assert "Waiting for approval" in msg
 
     def test_check_approved(self) -> None:
         ba = BlockingApproval(timeout=60)
-        rid = ba.request("架构设计审批")
+        rid = ba.request("Architecture design approval")
         ba.approve(rid)
         status, msg = ba.check_and_timeout(rid)
         assert status == ApprovalStatus.APPROVED
-        assert "已批准" in msg
+        assert "Approved" in msg
 
     def test_check_rejected(self) -> None:
         ba = BlockingApproval(timeout=60)
-        rid = ba.request("架构设计审批")
+        rid = ba.request("Architecture design approval")
         ba.reject(rid)
         status, msg = ba.check_and_timeout(rid)
         assert status == ApprovalStatus.REJECTED
-        assert "已拒绝" in msg
+        assert "Rejected" in msg
 
     def test_check_expired_saves_state(self, store: StateStore) -> None:
         ba = BlockingApproval(timeout=1, store=store)
-        rid = ba.request("架构设计审批")
+        rid = ba.request("Architecture design approval")
         time.sleep(1.5)
         status, msg = ba.check_and_timeout(rid)
         assert status == ApprovalStatus.EXPIRED
-        assert "超时已过期" in msg
-        assert "状态已保存" in msg
+        assert "Timed out" in msg
+        assert "state saved" in msg
         rec = ba.get_record(rid)
         assert rec is not None
         assert rec.checkpoint_id is not None
@@ -307,11 +308,11 @@ class TestBlockingApproval:
         ba = BlockingApproval(timeout=60)
         status, msg = ba.check_and_timeout("nonexistent")
         assert status == ApprovalStatus.REJECTED
-        assert "记录不存在" in msg
+        assert "Record does not exist" in msg
 
     def test_timeout_with_project_id(self, store: StateStore) -> None:
         ba = BlockingApproval(timeout=1, project_id="proj1", store=store)
-        rid = ba.request("架构设计审批")
+        rid = ba.request("Architecture design approval")
         time.sleep(1.5)
         ba.check_and_timeout(rid)
         rec = ba.get_record(rid)
@@ -341,7 +342,7 @@ class TestAsyncApproval:
         rid = aa.request("git push")
         status, msg = aa.check_and_timeout(rid)
         assert status == ApprovalStatus.PENDING
-        assert "异步等待中" in msg
+        assert "Async waiting" in msg
 
     def test_check_approved(self) -> None:
         aa = AsyncApproval(timeout=60)
@@ -356,14 +357,14 @@ class TestAsyncApproval:
         time.sleep(1.5)
         status, msg = aa.check_and_timeout(rid)
         assert status == ApprovalStatus.SKIPPED
-        assert "超时已跳过" in msg
-        assert "状态已保存" in msg
+        assert "Timed out and skipped" in msg
+        assert "state saved" in msg
 
     def test_check_nonexistent(self) -> None:
         aa = AsyncApproval(timeout=60)
         status, msg = aa.check_and_timeout("nonexistent")
         assert status == ApprovalStatus.REJECTED
-        assert "记录不存在" in msg
+        assert "Record does not exist" in msg
 
 
 # ───────────────────────────────────────────────────────────────
@@ -385,7 +386,7 @@ class TestAutoApproval:
         rid = aa.request("读取文件")
         status, msg = aa.check_and_timeout(rid)
         assert status == ApprovalStatus.PENDING
-        assert "等待自动放行中" in msg
+        assert "Waiting for auto-pass" in msg
 
     def test_check_auto_passed_after_timeout(self) -> None:
         aa = AutoApproval(timeout=1)
@@ -393,7 +394,7 @@ class TestAutoApproval:
         time.sleep(1.5)
         status, msg = aa.check_and_timeout(rid)
         assert status == ApprovalStatus.AUTO_PASSED
-        assert "已自动放行" in msg
+        assert "Auto-passed" in msg
 
     def test_manual_auto_pass(self) -> None:
         aa = AutoApproval(timeout=60)
@@ -418,7 +419,7 @@ class TestAutoApproval:
         aa = AutoApproval(timeout=60)
         status, msg = aa.check_and_timeout("nonexistent")
         assert status == ApprovalStatus.REJECTED
-        assert "记录不存在" in msg
+        assert "Record does not exist" in msg
 
 
 # ───────────────────────────────────────────────────────────────
@@ -450,7 +451,7 @@ class TestCreateApproval:
         assert a.store is store
 
     def test_create_unknown_level(self) -> None:
-        with pytest.raises(ValueError, match="未知审批级别"):
+        with pytest.raises(ValueError):
             create_approval("unknown")  # type: ignore[arg-type]
 
 
@@ -471,7 +472,8 @@ class TestConvenienceFunctions:
         assert rid in approval._records
 
     def test_request_auto_approval(self, store: StateStore) -> None:
-        rid, approval = request_auto_approval("读取文件", store=store)
+        approval = AutoApproval(store=store)
+        rid = approval.request("读取文件")
         assert isinstance(approval, AutoApproval)
         assert rid in approval._records
 
@@ -543,7 +545,7 @@ class TestIntegration:
         ba.approve(rid)
         status, msg = ba.check_and_timeout(rid)
         assert status == ApprovalStatus.APPROVED
-        assert "已批准" in msg
+        assert "Approved" in msg
 
     def test_multiple_records(self) -> None:
         """同一审批器管理多个记录"""

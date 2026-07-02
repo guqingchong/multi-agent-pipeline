@@ -1,0 +1,100 @@
+# src/thresholds.yaml — Centralized hardcoded thresholds
+#
+# Consumed by:
+#   - src/evaluate.py
+#   - src/gate.py
+#   - src/inspector.py
+#
+# Edit values here to tune pipeline quality gates without changing code.
+
+# ───────────────────────────────────────────────────────────────
+# evaluate.py — LLM-as-Judge evaluation thresholds
+# ───────────────────────────────────────────────────────────────
+evaluate:
+  # Dimension weights for weighted composite score.
+  # Must sum to 1.0.
+  weights:
+    accuracy: 0.30
+    completeness: 0.20
+    honesty: 0.25
+    helpfulness: 0.15
+    consistency: 0.10
+
+  # Red-line veto thresholds.
+  # Scores below these values trigger BLOCK / P0 verdicts.
+  red_lines:
+    honesty_min: 5.0      # honesty < this → BLOCK
+    accuracy_min: 4.0     # accuracy < this → BLOCK
+
+  # Rule-based dimension scoring heuristic.
+  scoring:
+    default_no_evidence: 7.0   # score when no relevant evidence exists
+    baseline: 8.0              # starting score
+    critical_penalty: 2.0      # subtract per critical finding
+    error_penalty: 0.5         # subtract per error finding
+    warning_penalty: 0.2       # subtract per warning finding
+    info_bonus: 0.1            # add per info finding
+    max_info_bonuses: 3        # cap info bonuses
+    score_min: 1.0             # clamp lower bound
+    score_max: 10.0            # clamp upper bound
+
+  # Evidence-collection heuristics.
+  evidence_collection:
+    trailing_whitespace_threshold: 10   # lines before reporting
+    long_line_threshold: 150            # characters per line
+    long_line_count_threshold: 5        # lines before reporting
+    blank_whitespace_threshold: 10      # blank lines before reporting
+    function_length_threshold: 100      # lines before flagging large function
+    todo_count_threshold: 5             # TODO/FIXME/HACK markers before reporting
+
+  # Lie / hallucination detection heuristics.
+  lie_detection:
+    inflated_metrics_multiplier: 2.0    # claimed > actual * multiplier → fabrication
+
+  # Recommendation generation thresholds.
+  recommendations:
+    critical_score_threshold: 4.0
+    improve_score_threshold: 6.0
+
+
+# ───────────────────────────────────────────────────────────────
+# gate.py — Quality gate thresholds
+# ───────────────────────────────────────────────────────────────
+gate:
+  # Target latency budgets (seconds) for each gate level.
+  timeouts:
+    post_gen: 5.0
+    commit: 30.0
+    push: 300.0
+
+  # Secret scanner settings.
+  secrets:
+    min_secret_length: 8
+
+  # Lint thresholds used by the COMMIT gate.
+  lint:
+    trailing_whitespace_threshold: 20
+    long_line_threshold: 150
+    long_line_count_threshold: 5
+    blank_whitespace_threshold: 10
+
+  # Quality metrics used by the PUSH gate.
+  quality:
+    min_test_ratio: 0.1     # test_lines / src_lines
+    min_doc_ratio: 0.5      # docstrings / (src_lines / 50)
+
+
+# ───────────────────────────────────────────────────────────────
+# inspector.py — Independent review thresholds
+# ───────────────────────────────────────────────────────────────
+inspector:
+  defaults:
+    model: "claude-sonnet-4-20250514"
+    neutral_score: 0.5
+    score_min: 0.0
+    score_max: 1.0
+
+  # Artifact text truncation limits (characters).
+  artifacts:
+    phase_artifact_max_chars: 5000
+    features_json_max_chars: 3000

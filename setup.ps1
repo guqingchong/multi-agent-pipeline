@@ -1,5 +1,7 @@
 # setup.ps1 — 一键安装依赖脚本
 # 面向小白用户：自动检查环境并安装所有需要的 Python 包
+#
+# 自动生成于: delivery.py (W5-Q06)
 
 param(
     [switch]$Force,
@@ -40,7 +42,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
 Write-Host "========================================" -ForegroundColor $Cyan
-Write-Host "  Multi-Agent Pipeline 依赖安装脚本" -ForegroundColor $Cyan
+Write-Host "  multi-agent-pipeline 依赖安装脚本" -ForegroundColor $Cyan
 Write-Host "========================================" -ForegroundColor $Cyan
 Write-Host "项目目录: $ScriptDir" -ForegroundColor $Cyan
 
@@ -103,12 +105,12 @@ Write-Step "安装核心依赖"
 
 # 定义依赖列表
 $CorePackages = @(
-    "pyyaml>=6.0",
-    "pytest>=7.0",
-    "pytest-cov",
-    "pytest-asyncio",
-    "rich>=13.0",
-    "playwright>=1.40.0"
+    "pyyaml>=6.0"
+"pytest>=7.0"
+"pytest-cov"
+"pytest-asyncio"
+"rich>=13.0"
+"playwright>=1.40.0"
 )
 
 # 尝试使用国内镜像加速
@@ -147,21 +149,48 @@ if ($InstallFailed) {
 Write-Step "验证模块导入"
 
 $ModulesToCheck = @(
-    "yaml",
-    "pytest",
-    "rich",
-    "playwright"
+"yaml", "pytest", "pytest_cov", "pytest_asyncio", "rich", "playwright"
 )
 
 $ImportFailed = $false
 foreach ($Mod in $ModulesToCheck) {
     try {
-        python -c "import $Mod" 2>&1 | Out-Null
-        Write-Pass "模块 $Mod 可导入"
-    } catch {
-        Write-Fail "模块 $Mod 导入失败"
-        $ImportFailed = $true
-    }
+        python -c "import yaml; print('OK')" 2>&1 | Out-Null
+    Write-Pass "模块 PyYAML 可导入"
+} catch {
+    Write-Fail "模块 PyYAML 导入失败"
+    $ImportFailed = $true
+}
+    python -c "import pytest; print('OK')" 2>&1 | Out-Null
+    Write-Pass "模块 pytest 可导入"
+} catch {
+    Write-Fail "模块 pytest 导入失败"
+    $ImportFailed = $true
+}
+    python -c "import pytest_cov; print('OK')" 2>&1 | Out-Null
+    Write-Pass "模块 pytest-cov 可导入"
+} catch {
+    Write-Fail "模块 pytest-cov 导入失败"
+    $ImportFailed = $true
+}
+    python -c "import pytest_asyncio; print('OK')" 2>&1 | Out-Null
+    Write-Pass "模块 pytest-asyncio 可导入"
+} catch {
+    Write-Fail "模块 pytest-asyncio 导入失败"
+    $ImportFailed = $true
+}
+    python -c "import rich; print('OK')" 2>&1 | Out-Null
+    Write-Pass "模块 rich 可导入"
+} catch {
+    Write-Fail "模块 rich 导入失败"
+    $ImportFailed = $true
+}
+    python -c "import playwright; print('OK')" 2>&1 | Out-Null
+    Write-Pass "模块 playwright 可导入"
+} catch {
+    Write-Fail "模块 playwright 导入失败"
+    $ImportFailed = $true
+}
 }
 
 if ($ImportFailed) {
@@ -175,22 +204,7 @@ if ($ImportFailed) {
 Write-Step "验证项目内部模块"
 
 $ProjectModules = @(
-    "pipeline",
-    "phase_checks",
-    "phase_flow",
-    "state_store",
-    "adapters",
-    "sandbox",
-    "circuit_breaker",
-    "approval",
-    "observability",
-    "context_manager",
-    "prompt_cache",
-    "worktree",
-    "config_loader",
-    "performance_optimizer",
-    "fallback_manager",
-    "e2e_framework"
+"pipeline", "phase_checks", "phase_flow", "state_store", "adapters", "sandbox", "circuit_breaker", "approval", "observability", "context_manager", "prompt_cache", "prompt_cache_store", "worktree", "config_loader", "performance_optimizer", "fallback_manager", "e2e_framework", "delivery"
 )
 
 $SrcPath = Join-Path $ScriptDir "src"
@@ -200,17 +214,221 @@ $EnvPath = [System.Environment]::GetEnvironmentVariable("PYTHONPATH", "Process")
 $ProjectImportFailed = $false
 foreach ($Mod in $ProjectModules) {
     try {
-        $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import $Mod; print('OK')" 2>&1
-        if ($Output -match "OK") {
-            Write-Pass "项目模块 $Mod 可导入"
-        } else {
-            Write-Fail "项目模块 $Mod 导入异常: $Output"
-            $ProjectImportFailed = $true
-        }
-    } catch {
-        Write-Fail "项目模块 $Mod 导入失败"
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import pipeline; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 pipeline 可导入"
+    } else {
+        Write-Fail "项目模块 pipeline 导入异常: $Output"
         $ProjectImportFailed = $true
     }
+} catch {
+    Write-Fail "项目模块 pipeline 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import phase_checks; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 phase_checks 可导入"
+    } else {
+        Write-Fail "项目模块 phase_checks 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 phase_checks 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import phase_flow; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 phase_flow 可导入"
+    } else {
+        Write-Fail "项目模块 phase_flow 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 phase_flow 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import state_store; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 state_store 可导入"
+    } else {
+        Write-Fail "项目模块 state_store 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 state_store 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import adapters; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 adapters 可导入"
+    } else {
+        Write-Fail "项目模块 adapters 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 adapters 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import sandbox; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 sandbox 可导入"
+    } else {
+        Write-Fail "项目模块 sandbox 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 sandbox 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import circuit_breaker; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 circuit_breaker 可导入"
+    } else {
+        Write-Fail "项目模块 circuit_breaker 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 circuit_breaker 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import approval; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 approval 可导入"
+    } else {
+        Write-Fail "项目模块 approval 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 approval 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import observability; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 observability 可导入"
+    } else {
+        Write-Fail "项目模块 observability 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 observability 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import context_manager; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 context_manager 可导入"
+    } else {
+        Write-Fail "项目模块 context_manager 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 context_manager 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import prompt_cache; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 prompt_cache 可导入"
+    } else {
+        Write-Fail "项目模块 prompt_cache 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 prompt_cache 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import prompt_cache_store; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 prompt_cache_store 可导入"
+    } else {
+        Write-Fail "项目模块 prompt_cache_store 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 prompt_cache_store 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import worktree; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 worktree 可导入"
+    } else {
+        Write-Fail "项目模块 worktree 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 worktree 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import config_loader; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 config_loader 可导入"
+    } else {
+        Write-Fail "项目模块 config_loader 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 config_loader 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import performance_optimizer; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 performance_optimizer 可导入"
+    } else {
+        Write-Fail "项目模块 performance_optimizer 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 performance_optimizer 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import fallback_manager; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 fallback_manager 可导入"
+    } else {
+        Write-Fail "项目模块 fallback_manager 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 fallback_manager 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import e2e_framework; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 e2e_framework 可导入"
+    } else {
+        Write-Fail "项目模块 e2e_framework 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 e2e_framework 导入失败"
+    $ProjectImportFailed = $true
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import delivery; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Pass "项目模块 delivery 可导入"
+    } else {
+        Write-Fail "项目模块 delivery 导入异常: $Output"
+        $ProjectImportFailed = $true
+    }
+} catch {
+    Write-Fail "项目模块 delivery 导入失败"
+    $ProjectImportFailed = $true
+}
 }
 
 if ($ProjectImportFailed) {

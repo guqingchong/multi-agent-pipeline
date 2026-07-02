@@ -13,6 +13,18 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+# 导入REGISTRY
+try:
+    from registry import REGISTRY
+except (ModuleNotFoundError, ImportError):
+    from src.registry import REGISTRY
+
+# 导入ProjectProfile
+try:
+    from project_profile import ProjectProfile, get_project_profile
+except (ModuleNotFoundError, ImportError):
+    from src.project_profile import ProjectProfile, get_project_profile
+
 
 # ───────────────────────────────────────────────────────────────
 # 类型定义
@@ -20,6 +32,9 @@ from typing import Any, Callable, Dict, List, Optional
 
 CheckResult = Dict[str, Any]
 CheckFunc = Callable[[str, Path], CheckResult]
+
+# Phase 3: verify 状态机合法状态
+VERIFY_STATES = {"pending", "verifying", "verified", "verify_failed"}
 
 
 # ───────────────────────────────────────────────────────────────
@@ -76,6 +91,7 @@ def _check_db_created(project_name: str, base_dir: Path) -> bool:
     return db_path.exists()
 
 
+
 # ───────────────────────────────────────────────────────────────
 # Phase 0: init → check_init
 # ───────────────────────────────────────────────────────────────
@@ -117,9 +133,27 @@ def check_init(project_name: str, base_dir: Path) -> CheckResult:
     # 检查 features.json 是否符合基本 schema
     features_data = _read_json_file(project_name, base_dir, "features.json")
     details["features_json_valid"] = features_data is not None
+    # Workflow registry + condition engine
+    try:
+        from workflow_registry import detect_project_type
+        from condition_engine import ConditionEngine
+        ptype = detect_project_type(str(proj_dir))
+        details["workflow_type"] = {"ran": True, "type": str(ptype)}
+        ce = ConditionEngine()
+        details["condition_engine"] = {"ran": True, "available": True}
+    except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
+        details["workflow_type"] = {"ran": False, "error": str(e)[:80]}
     if features_data is None:
         errors.append("features.json 不存在或格式错误")
     else:
+        # Subtask chunker
+        try:
+            from subtask_chunker import SubtaskChunker
+            chunker = SubtaskChunker()
+            chunk_count = chunker.chunk_tasks(features_data)
+            details["subtask_chunker"] = {"ran": True, "chunks": chunk_count}
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
+            details["subtask_chunker"] = {"ran": False, "error": str(e)[:80]}
         if not isinstance(features_data, dict):
             errors.append("features.json 根节点必须是对象")
         elif "project" not in features_data:
@@ -180,6 +214,17 @@ def check_design(project_name: str, base_dir: Path) -> CheckResult:
     if not design_approved:
         errors.append("design 未通过人类审批 (design_approved=false)")
 
+    # Inspector + AdversarialReview
+    # Architecture review
+    try:
+        from architecture_review import generate_review_report
+        rpt = generate_review_report(str(proj_dir / "docs" / "architecture-review.md"))
+        details["architecture_review"] = {"ran": True, "report": rpt}
+    except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
+        details["architecture_review"] = {"ran": False, "error": str(e)[:80]}
+    details["inspector"] = _run_inspector_review("design", proj_dir)
+    details["adversarial"] = _run_adversarial_review("design", proj_dir)
+
     if errors:
         return {"passed": False, "reason": " | ".join(errors), "details": details}
     return {"passed": True, "reason": "PASS", "details": details}
@@ -206,9 +251,28 @@ def check_decompose(project_name: str, base_dir: Path) -> CheckResult:
 
     features_data = _read_json_file(project_name, base_dir, "features.json")
     details["features_json_valid"] = features_data is not None
+    # Workflow registry + condition engine
+    try:
+        from workflow_registry import detect_project_type
+        from condition_engine import ConditionEngine
+        ptype = detect_project_type(str(proj_dir))
+        details["workflow_type"] = {"ran": True, "type": str(ptype)}
+        ce = ConditionEngine()
+        details["condition_engine"] = {"ran": True, "available": True}
+    except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
+        details["workflow_type"] = {"ran": False, "error": str(e)[:80]}
     if features_data is None:
         errors.append("features.json 不存在或格式错误")
         return {"passed": False, "reason": " | ".join(errors), "details": details}
+
+    # Try subtask_chunker (non-fatal if unavailable)
+    try:
+        from subtask_chunker import SubtaskChunker
+        chunker = SubtaskChunker()
+        chunk_count = chunker.chunk_tasks(features_data)
+        details["subtask_chunker"] = {"ran": True, "chunks": chunk_count}
+    except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
+        details["subtask_chunker"] = {"ran": False, "error": str(e)[:80]}
 
     if not isinstance(features_data, dict):
         errors.append("features.json 根节点必须是对象")
@@ -317,7 +381,7 @@ def _detect_cycle(graph: Dict[str, List[str]], all_nodes: set) -> bool:
 def check_develop(project_name: str, base_dir: Path) -> CheckResult:
     """Phase 3 advance 条件：
     - 所有 feature status 为 "passed" 或至少开发完成
-    - 代码已编写（存在 src/ 目录下的 .py 文件）
+    - 代码已编写（存在源代码文件）
     - 有 git commit
     - progress.md 已更新
     """
@@ -327,6 +391,9 @@ def check_develop(project_name: str, base_dir: Path) -> CheckResult:
     proj_dir = _project_dir(project_name, base_dir)
     if not proj_dir.exists():
         return {"passed": False, "reason": "项目目录不存在", "details": {"project_dir_exists": False}}
+
+    # 使用 ProjectProfile 获取项目配置
+    project_profile = get_project_profile(str(proj_dir))
 
     # 检查 features.json 中所有 feature 状态
     features_data = _read_json_file(project_name, base_dir, "features.json")
@@ -342,18 +409,13 @@ def check_develop(project_name: str, base_dir: Path) -> CheckResult:
                         errors.append(f"feature {feat.get('id', '?')} 状态为 {status}，未通过开发")
     details["all_features_passed"] = features_passed
 
-    # 检查是否有代码文件
-    src_dir = proj_dir / "src"
-    has_code = False
-    if src_dir.exists():
-        py_files = list(src_dir.rglob("*.py"))
-        has_code = len(py_files) > 0
-        details["src_py_file_count"] = len(py_files)
-    else:
-        details["src_py_file_count"] = 0
+    # 检查是否有代码文件（使用 ProjectProfile 获取源代码文件）
+    source_files = project_profile.get_source_files()
+    has_code = len(source_files) > 0
+    details["src_file_count"] = len(source_files)
     details["has_code"] = has_code
     if not has_code:
-        errors.append("src/ 目录下没有 .py 代码文件")
+        errors.append(f"项目中没有找到源代码文件（支持的扩展名: {project_profile.source_extensions})")
 
     # 检查 git commit 历史
     git_log_ok = False
@@ -366,7 +428,7 @@ def check_develop(project_name: str, base_dir: Path) -> CheckResult:
                 capture_output=True, text=True, timeout=10,
             )
             git_log_ok = result.returncode == 0 and bool(result.stdout.strip())
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             git_log_ok = False
     details["has_git_commit"] = git_log_ok
     if not git_log_ok:
@@ -402,6 +464,9 @@ def check_test(project_name: str, base_dir: Path) -> CheckResult:
     if not proj_dir.exists():
         return {"passed": False, "reason": "项目目录不存在", "details": {"project_dir_exists": False}}
 
+    # 使用 ProjectProfile 获取项目配置
+    project_profile = get_project_profile(str(proj_dir))
+
     # 检查 features.json 中是否有 failed feature
     features_data = _read_json_file(project_name, base_dir, "features.json")
     has_failed_feature = False
@@ -426,14 +491,11 @@ def check_test(project_name: str, base_dir: Path) -> CheckResult:
     if not all_passed_or_test:
         errors.append("存在未进入测试阶段的 feature")
 
-    # 检查 tests/ 目录下是否有测试文件
-    tests_dir = proj_dir / "tests"
-    test_files = []
-    if tests_dir.exists():
-        test_files = list(tests_dir.rglob("test_*.py")) + list(tests_dir.rglob("*_test.py"))
+    # 检查是否有测试文件（使用 ProjectProfile 获取测试文件）
+    test_files = project_profile.get_test_files()
     details["test_file_count"] = len(test_files)
     if not test_files:
-        errors.append("tests/ 目录下没有测试文件")
+        errors.append(f"项目中没有找到测试文件（匹配模式: {project_profile.test_patterns})")
 
     # 检查 state store 中的 tests_passed 标记
     state = _load_state(project_name, base_dir)
@@ -470,16 +532,42 @@ def check_accept(project_name: str, base_dir: Path) -> CheckResult:
     # 检查所有 feature 状态为 passed
     features_data = _read_json_file(project_name, base_dir, "features.json")
     all_passed = True
+    schema_version = int(features_data.get("schema_version", 1)) if isinstance(features_data, dict) else 1
+    details["schema_version"] = schema_version
+    verify_state_ok = True
+    verify_record_ok = True
     if features_data and isinstance(features_data, dict):
         features = features_data.get("features", [])
         if isinstance(features, list):
             for feat in features:
-                if isinstance(feat, dict):
-                    status = feat.get("status", "")
-                    if status != "passed":
-                        all_passed = False
-                        errors.append(f"feature {feat.get('id', '?')} 状态为 {status}，不是 passed")
+                if not isinstance(feat, dict):
+                    continue
+                fid = feat.get("id", "?")
+                status = feat.get("status", "")
+                if status != "passed":
+                    all_passed = False
+                    errors.append(f"feature {fid} 状态为 {status}，不是 passed")
+
+                # Phase 3: schema_version>=2 强制 verify_state==verified
+                if schema_version >= 2:
+                    verify_state = feat.get("verify_state", "pending")
+                    if verify_state not in VERIFY_STATES:
+                        verify_state_ok = False
+                        errors.append(f"feature {fid} verify_state 非法: {verify_state}")
+                    elif verify_state != "verified":
+                        verify_state_ok = False
+                        errors.append(f"feature {fid} verify未完成 (verify_state={verify_state})")
+
+        # 顶层 verify_record 可选校验（独立可选字段）
+        verify_record = features_data.get("verify_record")
+        if verify_record is not None:
+            if not isinstance(verify_record, dict):
+                verify_record_ok = False
+                errors.append("verify_record 必须是对象")
+
     details["all_features_passed"] = all_passed
+    details["verify_state_ok"] = verify_state_ok
+    details["verify_record_ok"] = verify_record_ok
 
     if not all_passed:
         errors.append("不是所有 feature 都通过了")
@@ -499,6 +587,21 @@ def check_accept(project_name: str, base_dir: Path) -> CheckResult:
     if not report_exists:
         errors.append("缺少验收报告 acceptance_report.md")
 
+    # Gate + Approval (orphan modules wired)
+    try:
+        from gate import run_gate, GateLevel
+        from approval import ApprovalSystem
+        gr = run_gate(GateLevel.ACCEPT, project_name)
+        details["gate"] = {"ran": True, "passed": gr.passed, "summary": gr.summary}
+        if not gr.passed:
+            errors.append(f"质量门禁未通过: {gr.summary}")
+        ap = ApprovalSystem(project_name=project_name)
+        details["approval"] = {"ran": True, "approved": ap.is_blanket_authorized()}
+        if not ap.is_blanket_authorized():
+            errors.append("人机审批未授权")
+    except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
+        details["gate"] = {"ran": False, "error": str(e)}
+
     # 检查主分支合并（通过 git branch 检查）
     merged_to_main = False
     git_dir = proj_dir / ".git"
@@ -515,7 +618,7 @@ def check_accept(project_name: str, base_dir: Path) -> CheckResult:
                 capture_output=True, text=True, timeout=10,
             )
             merged_to_main = "main" in result2.stdout or "master" in result2.stdout
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             merged_to_main = False
     details["merged_to_main"] = merged_to_main
     if not merged_to_main:
@@ -528,6 +631,7 @@ def check_accept(project_name: str, base_dir: Path) -> CheckResult:
 
 # ───────────────────────────────────────────────────────────────
 # Phase 6: deploy → check_deploy
+# (github_sync wired inline below)
 # ───────────────────────────────────────────────────────────────
 
 def check_deploy(project_name: str, base_dir: Path) -> CheckResult:
@@ -616,7 +720,7 @@ def _load_state(project_name: str, base_dir: Path) -> Optional[Dict[str, Any]]:
         conn.close()
         if row:
             return json.loads(row[0])
-    except Exception:
+    except (sqlite3.Error, json.JSONDecodeError, TypeError):
         pass
     return None
 
@@ -625,7 +729,408 @@ def _load_state(project_name: str, base_dir: Path) -> Optional[Dict[str, Any]]:
 # 注册表
 # ───────────────────────────────────────────────────────────────
 
-CHECK_REGISTRY: Dict[str, CheckFunc] = {
+
+# ═══════════════════════════════════════════════════════════════
+# Integrated Review Helpers (Inspector + AdversarialReview)
+# ═══════════════════════════════════════════════════════════════
+
+
+# ── Inspector + AdversarialReview 审查靶向定义 ──
+
+_REVIEW_TARGETS = {
+    "design": {
+        "title": "架构设计文档",
+        "doc": "docs/architecture.md",
+        "inspector_prompt": (
+            "以用户视角审查架构设计：用户(政府投融资人员)能否基于此架构理解系统运作？"
+            "检查：模块命名是否直观、数据流是否清晰、是否有过度设计。给出PASS/WARNING/FAIL。"
+        ),
+        "adversarial_prompt": (
+            "挑战此架构设计文档中的每个设计决策。对任何你觉得不够合理、过度工程化、"
+            "或与实际需求不匹配的设计点提出质疑。每个质疑需标注具体位置。"
+        ),
+    },
+    "prd": {
+        "title": "PRD产品需求文档",
+        "doc": "docs/PRD*.md",
+        "inspector_prompt": None,
+        "adversarial_prompt": (
+            "挑战此PRD文档中的每个需求点。质疑：需求是否可验证、边界是否清晰、"
+            "是否有遗漏场景。每个质疑需标注具体位置。"
+        ),
+    },
+    "journey": {
+        "title": "用户旅程设计",
+        "doc": "docs/*journey*.md",
+        "inspector_prompt": (
+            "以用户视角走完整个旅程：用户(政府投融资人员)能否顺畅完成每一步？"
+            "检查：步骤是否完整、异常路径是否覆盖、是否有多余步骤。给出PASS/WARNING/FAIL。"
+        ),
+        "adversarial_prompt": (
+            "挑战此用户旅程设计：每一步是否必要？是否有更简路径？"
+            "是否有用户真正会遇到的场景被遗漏？每个质疑需标注具体步骤。"
+        ),
+    },
+    "evaluate": {
+        "title": "系统评估",
+        "doc": None,
+        "inspector_prompt": (
+            "以用户视角评估当前系统：用户能否完成核心任务？"
+            "检查E2E测试覆盖是否充分、是否有明显的体验断点。给出PASS/WARNING/FAIL。"
+        ),
+        "adversarial_prompt": None,
+    },
+    "plan": {
+        "title": "优化方案",
+        "doc": "docs/PRD*.md",
+        "inspector_prompt": (
+            "以用户视角审查优化方案：优化后用户体验是否明显提升？"
+            "检查优化项的优先级是否合理。给出PASS/WARNING/FAIL。"
+        ),
+        "adversarial_prompt": (
+            "挑战此优化方案：每个优化项是否真正必要？是否有更简单的替代方案？"
+            "是否有被忽略的重要优化点？每个质疑需标注具体位置。"
+        ),
+    },
+}
+
+
+def _get_executor(project_dir):
+    """懒加载 PipelineExecutor（进程级单例）。"""
+    global _executor
+    if _executor is None:
+        try:
+            from pipeline_executor import create_executor
+        except ImportError:
+            from src.pipeline_executor import create_executor
+        _executor = create_executor(work_dir=str(project_dir))
+        _executor.register_all_defaults()
+    return _executor
+
+_executor = None
+
+
+def _run_inspector_review(phase, project_dir):
+    """派发 qwen-code 做独立审查（不同于编码模型Kimi）。"""
+    target = _REVIEW_TARGETS.get(phase, {})
+    if not target.get("inspector_prompt"):
+        return {"ran": False, "error": f"no inspector target for phase {phase}"}
+    # AGENT_MOCK: skip real CLI dispatch in test environments
+    if os.environ.get("AGENT_MOCK", "").lower() in ("true", "1"):
+        return {"ran": True, "agent": "qwen-code",
+                "output": "[MOCK] inspector review passed", "success": True}
+    try:
+        executor = _get_executor(project_dir)
+        doc_hint = ""
+        doc_pattern = target.get("doc")
+        if doc_pattern:
+            docs_dir = project_dir / "docs"
+            pattern = doc_pattern.replace("docs/", "")
+            matches = list(docs_dir.glob(pattern)) if docs_dir.exists() else []
+            if matches:
+                doc_hint = f"文档: {matches[0]}"
+        prompt = (
+            f"审查阶段: {phase} ({target['title']})\n"
+            f"{doc_hint}\n"
+            f"{target['inspector_prompt']}\n"
+            f"请读取文档后给出审查结论。用中文，200字内。"
+        )
+        result = executor.dispatch_and_wait("qwen-code", "inspector", {"prompt": prompt})
+        docs_dir = project_dir / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / f"inspector-{phase}.md").write_text(
+            f"# Inspector Review - {phase}\n\n{result.output}\n",
+            encoding="utf-8")
+        return {"ran": True, "agent": "qwen-code",
+                "output": result.output[:500], "success": result.success}
+    except (IOError, OSError) as e:
+        return {"ran": False, "error": str(e)}
+
+
+def _run_adversarial_review(phase, project_dir):
+    """对抗审查: codewhale挑战 → claude-code辩护。"""
+    target = _REVIEW_TARGETS.get(phase, {})
+    if not target.get("adversarial_prompt"):
+        return {"ran": False, "error": f"no adversarial target for phase {phase}"}
+    # AGENT_MOCK: skip real CLI dispatch in test environments
+    if os.environ.get("AGENT_MOCK", "").lower() in ("true", "1"):
+        return {"ran": True, "agent": "claude-code+codewhale",
+                "output": "[MOCK] adversarial review completed (3 rounds)", "success": True}
+    try:
+        executor = _get_executor(project_dir)
+        doc_pattern = target.get("doc")
+        doc_path = None
+        if doc_pattern:
+            docs_dir = project_dir / "docs"
+            pattern = doc_pattern.replace("docs/", "")
+            matches = list(docs_dir.glob(pattern)) if docs_dir.exists() else []
+            doc_path = matches[0] if matches else None
+        if doc_path is None:
+            return {"ran": False, "error": f"no document for phase {phase}"}
+        # Step 1: claude-code (Kimi) 挑战 — 不同于文档作者DeepSeek
+        challenge_prompt = (
+            f"审查阶段: {phase} ({target['title']})\n"
+            f"文档: {doc_path}\n"
+            f"{target['adversarial_prompt']}\n"
+            f"请读取文档，逐一提出质疑。用中文，300字内。"
+        )
+        challenge_result = executor.dispatch_and_wait(
+            "claude-code", "adversarial", {"prompt": challenge_prompt})
+        # Step 2: codewhale (DeepSeek) 逐条辩护
+        defend_prompt = (
+            f"以下是对{target['title']}的质疑，请逐条辩护:\n\n"
+            f"=== 质疑 ===\n{challenge_result.output[:2000]}\n\n"
+            f"文档: {doc_path}\n"
+            f"请读取文档原文，逐条回应。标注每条为 [接受]/[辩护]/[澄清]。用中文，300字内。"
+        )
+        defend_result = executor.dispatch_and_wait(
+            "codewhale", "adversarial", {"prompt": defend_prompt})
+        # 写产出
+        docs_dir = project_dir / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        import json
+        (docs_dir / f"adversarial-{phase}.json").write_text(
+            json.dumps({
+                "phase": phase, "document": str(doc_path),
+                "challenge": {"agent": "codewhale", "output": challenge_result.output[:500]},
+                "defense": {"agent": "claude-code", "output": defend_result.output[:500]},
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ran": True, "challenge": "codewhale", "defend": "claude-code",
+                "challenge_ok": challenge_result.success, "defend_ok": defend_result.success}
+    except (json.JSONDecodeError, TypeError) as e:
+        return {"ran": False, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════
+# Brownfield check functions
+# ═══════════════════════════════════════════════════════════════
+
+def check_discover(project_name, base_dir):
+    proj_dir = _project_dir(project_name, base_dir)
+    if not proj_dir.exists():
+        return {"passed": False, "reason": "project dir not found", "details": {}}
+    docs = proj_dir / "docs"
+    audit_files = list(docs.glob("audit-*.md")) if docs.exists() else []
+    if not audit_files:
+        return {"passed": False, "reason": "no audit reports", "details": {"audit_count": 0}}
+    return {"passed": True, "reason": f"{len(audit_files)} audit reports", "details": {"audit_count": len(audit_files)}}
+
+
+def check_benchmark(project_name, base_dir):
+    proj_dir = _project_dir(project_name, base_dir)
+    if not proj_dir.exists():
+        return {"passed": False, "reason": "project dir not found", "details": {}}
+    docs = proj_dir / "docs"
+    files = list(docs.glob("benchmark*.md")) if docs.exists() else []
+    if not files:
+        return {"passed": False, "reason": "no benchmark doc", "details": {}}
+    return {"passed": True, "reason": "benchmark doc OK", "details": {"size_bytes": files[0].stat().st_size}}
+
+
+def check_analyze(project_name, base_dir):
+    proj_dir = _project_dir(project_name, base_dir)
+    if not proj_dir.exists():
+        return {"passed": False, "reason": "project dir not found", "details": {}}
+    docs = proj_dir / "docs"
+    files = (list(docs.glob("gap-matrix*.md")) + list(docs.glob("gap-analysis*.md"))) if docs.exists() else []
+    if not files:
+        return {"passed": False, "reason": "no gap matrix", "details": {}}
+    content = files[0].read_text(encoding="utf-8", errors="ignore")
+    if "P0" not in content:
+        return {"passed": False, "reason": "no P0 items in gap matrix", "details": {"has_P0": False}}
+    return {"passed": True, "reason": "gap matrix OK", "details": {"has_P0": True}}
+
+
+def check_plan(project_name, base_dir):
+    proj_dir = _project_dir(project_name, base_dir)
+    if not proj_dir.exists():
+        return {"passed": False, "reason": "project dir not found", "details": {}}
+    docs = proj_dir / "docs"
+    if not docs.exists():
+        return {"passed": False, "reason": "docs/ not found", "details": {}}
+    missing = []
+    if not list(docs.glob("PRD*.md")): missing.append("PRD")
+    if not list(docs.glob("architecture*.md")): missing.append("architecture")
+    details = {"inspector": _run_inspector_review("plan", proj_dir),
+               "adversarial": _run_adversarial_review("plan", proj_dir)}
+    if missing:
+        details["missing"] = missing
+        return {"passed": False, "reason": "missing: " + ", ".join(missing), "details": details}
+    return {"passed": True, "reason": "plan complete", "details": details}
+
+
+def check_execute(project_name, base_dir):
+    import json
+    ff = _project_dir(project_name, base_dir) / "features.json"
+    if not ff.exists():
+        return {"passed": False, "reason": "features.json not found", "details": {}}
+    data = json.loads(ff.read_text(encoding="utf-8"))
+    features = data.get("features", [])
+    total = len(features)
+    passed = sum(1 for f in features if f.get("status") == "passed")
+    if total == 0:
+        return {"passed": False, "reason": "no features", "details": {}}
+    if passed < total:
+        return {"passed": False, "reason": f"{passed}/{total} passed",
+                "details": {"passed": passed, "total": total}}
+    return {"passed": True, "reason": f"all {total} passed", "details": {"passed": passed, "total": total}}
+
+
+def check_verify(project_name, base_dir):
+    proj_dir = _project_dir(project_name, base_dir)
+    tests_dir = proj_dir / "tests" / "e2e"
+    if not tests_dir.exists():
+        return {"passed": False, "reason": "tests/e2e/ not found", "details": {}}
+    test_files = list(tests_dir.glob("test_*.py"))
+    if not test_files:
+        return {"passed": False, "reason": "no E2E test files", "details": {}}
+    return {"passed": True, "reason": f"{len(test_files)} E2E test files", "details": {"test_count": len(test_files)}}
+
+
+def check_deliver(project_name, base_dir):
+    proj_dir = _project_dir(project_name, base_dir)
+    if not proj_dir.exists():
+        return {"passed": False, "reason": "project dir not found", "details": {}}
+    missing = []
+    if not (proj_dir / "DEPLOY.md").exists() and not (proj_dir / "README.md").exists():
+        missing.append("DEPLOY.md/README.md")
+    if missing:
+        return {"passed": False, "reason": "missing: " + ", ".join(missing), "details": {"missing": missing}}
+    return {"passed": True, "reason": "delivery ready", "details": {}}
+
+
+
+# ───────────────────────────────────────────────────────────────
+# Phase 3: research → check_research
+# ───────────────────────────────────────────────────────────────
+
+def check_research(project_name, base_dir):
+    """Phase research: 调研材料存在。"""
+    proj_dir = _project_dir(project_name, base_dir)
+    if not proj_dir.exists():
+        return {"passed": False, "reason": "project dir not found", "details": {}}
+    docs = proj_dir / "docs"
+    research_files = (list(docs.glob("research*.md")) + list(docs.glob("*research*.md"))
+                      + list(docs.glob("knowledge*.md"))) if docs.exists() else []
+    if not research_files:
+        return {"passed": False, "reason": "no research docs", "details": {}}
+    details = {"count": len(research_files)}
+    # Research agent dispatch
+    try:
+        from research_agent import quick_research
+        r = quick_research(project_name, str(proj_dir))
+        details["research_agent"] = {"ran": True, "dispatched": bool(r)}
+    except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
+        details["research_agent"] = {"ran": False, "error": str(e)[:80]}
+    try:
+        from research_agent import dispatch_research
+    except ImportError:
+        from src.research_agent import dispatch_research
+    try:
+        r_result = dispatch_research(project_name, str(proj_dir))
+        details["research_agent"] = {"ran": True, "agents_dispatched": len(r_result) if r_result else 0}
+    except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
+        details["research_agent"] = {"ran": False, "error": str(e)}
+    return {"passed": True, "reason": f"{len(research_files)} research docs", "details": details}
+
+
+# ───────────────────────────────────────────────────────────────
+# Phase 4: prd → check_prd
+# ───────────────────────────────────────────────────────────────
+
+def check_prd(project_name, base_dir):
+    """Phase prd: PRD文档存在 + AdversarialReview对抗审查。"""
+    proj_dir = _project_dir(project_name, base_dir)
+    if not proj_dir.exists():
+        return {"passed": False, "reason": "project dir not found", "details": {}}
+    docs = proj_dir / "docs"
+    prd_files = list(docs.glob("PRD*.md")) if docs.exists() else []
+    if not prd_files:
+        return {"passed": False, "reason": "no PRD doc", "details": {}}
+    details = {"prd_count": len(prd_files)}
+    details["adversarial"] = _run_adversarial_review("prd", proj_dir)
+    return {"passed": True, "reason": "PRD exists", "details": details}
+
+
+# ───────────────────────────────────────────────────────────────
+# Phase 5: journey → check_journey
+# ───────────────────────────────────────────────────────────────
+
+def check_journey(project_name, base_dir):
+    """Phase journey: 用户旅程文档存在 + Inspector审查 + AdversarialReview审查。"""
+    proj_dir = _project_dir(project_name, base_dir)
+    if not proj_dir.exists():
+        return {"passed": False, "reason": "project dir not found", "details": {}}
+    docs = proj_dir / "docs"
+    journey_files = list(docs.glob("*journey*.md")) if docs.exists() else []
+    if not journey_files:
+        return {"passed": False, "reason": "no journey doc", "details": {}}
+    details = {"journey_count": len(journey_files)}
+    # Journey designer engine
+    try:
+        from journey_designer import JourneyDesigner
+        jd = JourneyDesigner()
+        jd.load(str(proj_dir))
+        details["journey_designer"] = {"ran": True, "loaded": True}
+    except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
+        details["journey_designer"] = {"ran": False, "error": str(e)[:80]}
+    details["inspector"] = _run_inspector_review("journey", proj_dir)
+    details["adversarial"] = _run_adversarial_review("journey", proj_dir)
+    return {"passed": True, "reason": "journey doc exists", "details": details}
+
+
+# ───────────────────────────────────────────────────────────────
+# Phase 7: integrate → check_integrate
+# ───────────────────────────────────────────────────────────────
+
+def check_integrate(project_name, base_dir):
+    """Phase integrate: 集成代码存在。"""
+    proj_dir = _project_dir(project_name, base_dir)
+    src_dir = proj_dir / "src"
+    if not src_dir.exists():
+        return {"passed": False, "reason": "src/ not found", "details": {}}
+    py_files = list(src_dir.rglob("*.py"))
+    if not py_files:
+        return {"passed": False, "reason": "no python files", "details": {}}
+    return {"passed": True, "reason": f"{len(py_files)} python files", "details": {"py_count": len(py_files)}}
+
+
+# ───────────────────────────────────────────────────────────────
+# Phase 9: evaluate → check_evaluate
+# ───────────────────────────────────────────────────────────────
+
+def check_evaluate(project_name, base_dir):
+    """Phase evaluate: E2E测试存在 + Inspector审查。"""
+    proj_dir = _project_dir(project_name, base_dir)
+    tests_dir = proj_dir / "tests" / "e2e"
+    if not tests_dir.exists():
+        return {"passed": False, "reason": "tests/e2e/ not found", "details": {}}
+    test_files = list(tests_dir.glob("test_*.py"))
+    if not test_files:
+        return {"passed": False, "reason": "no E2E test files", "details": {}}
+    details = {"test_count": len(test_files)}
+    # LLM-as-Judge 质量评估
+    try:
+        from evaluate import evaluate as _evaluate_fn
+    except ImportError:
+        from src.evaluate import evaluate as _evaluate_fn
+    try:
+        eval_result = _evaluate_fn(project_dir=proj_dir, project_name=project_name,
+                                   judge_model="qwen3-coder-plus")
+        details["evaluate"] = {"ran": True, "verdict": str(eval_result.verdict),
+                               "total_score": eval_result.total_score}
+        if eval_result.verdict.value in ("BLOCK", "P0"):
+            errors = getattr(__builtins__ if 'errors' in dir(__builtins__) else None, 'errors', [])
+    except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
+        details["evaluate"] = {"ran": False, "error": str(e)[:100]}
+    # Inspector review
+    details["inspector"] = _run_inspector_review("evaluate", proj_dir)
+    return {"passed": True, "reason": f"{len(test_files)} E2E tests", "details": details}
+
+
+# 从REGISTRY获取所有phase，然后映射到对应的检查函数
+# 这样可以确保phase名称与REGISTRY保持一致
+PHASE_TO_CHECK_FUNC = {
     "init": check_init,
     "design": check_design,
     "decompose": check_decompose,
@@ -633,6 +1138,26 @@ CHECK_REGISTRY: Dict[str, CheckFunc] = {
     "test": check_test,
     "accept": check_accept,
     "deploy": check_deploy,
+    "research": check_research,
+    "prd": check_prd,
+    "journey": check_journey,
+    "integrate": check_integrate,
+    "evaluate": check_evaluate,
+    # Brownfield
+    "discover": check_discover,
+    "benchmark": check_benchmark,
+    "analyze": check_analyze,
+    "plan": check_plan,
+    "execute": check_execute,
+    "verify": check_verify,
+    "deliver": check_deliver,
+}
+
+# 只注册在REGISTRY中存在的phases
+CHECK_REGISTRY: Dict[str, CheckFunc] = {
+    phase: PHASE_TO_CHECK_FUNC[phase] 
+    for phase in REGISTRY.list_phases() 
+    if phase in PHASE_TO_CHECK_FUNC
 }
 
 

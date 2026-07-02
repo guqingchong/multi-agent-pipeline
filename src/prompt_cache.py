@@ -26,9 +26,119 @@ from typing import Any, Dict, List, Optional, Tuple
 DEFAULT_MAX_ENTRIES = 100
 DEFAULT_TTL_SECONDS = 300  # 5 分钟
 
+# Default configuration for prompt caching
+DEFAULT_CONFIG = {
+    "prompt_cache": {
+        "enabled": True,
+        "target_hit_rate": 0.7,
+        "alert_threshold": 0.3,
+        "local_cache_backend": "memory",
+        "vector_cache_backend": "none",
+        "file_index_backend": "none",
+        "cache_layers": ["memory"],
+    }
+}
+
 
 # ───────────────────────────────────────────────────────────────
-# 数据模型
+# Configuration Loader
+# ───────────────────────────────────────────────────────────────
+
+class ConfigLoader:
+    """Configuration loader for prompt cache and related components."""
+
+    def __init__(self, config_path: str = None):
+        """Initialize the config loader, optionally from a YAML file."""
+        import yaml
+        import copy
+        self._config = copy.deepcopy(DEFAULT_CONFIG)
+        
+        if config_path:
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    yaml_data = yaml.safe_load(f)
+                    if yaml_data:
+                        # Deep merge YAML data with default config
+                        self._deep_merge(self._config, yaml_data)
+            except (FileNotFoundError, yaml.YAMLError):
+                # If config file doesn't exist or is invalid, use defaults
+                pass
+    
+    def _deep_merge(self, base_dict, update_dict):
+        """Recursively merge update_dict into base_dict."""
+        import copy
+        for key, value in update_dict.items():
+            if key in base_dict and isinstance(base_dict[key], dict) and isinstance(value, dict):
+                self._deep_merge(base_dict[key], value)
+            else:
+                base_dict[key] = copy.deepcopy(value)
+    
+    def get(self, key: str, default=None):
+        """Get a config value using dot notation (e.g., 'prompt_cache.enabled')."""
+        keys = key.split('.')
+        value = self._config
+        
+        for k in keys:
+            if isinstance(value, dict) and k in value:
+                value = value[k]
+            else:
+                return default
+                
+        return value
+    
+    def get_prompt_cache_config(self):
+        """Get the prompt cache configuration section."""
+        return self._config.get("prompt_cache", {})
+    
+    def is_layer_enabled(self, layer: str):
+        """Check if a specific cache layer is enabled."""
+        if not self.get("prompt_cache.enabled", True):
+            return False
+        layers = self.get("prompt_cache.cache_layers", ["memory"])
+        if isinstance(layers, str):
+            layers = [layers]
+        return layer in layers
+    
+    # Properties for accessing prompt cache config values
+    @property
+    def prompt_cache_enabled(self):
+        return self.get("prompt_cache.enabled", True)
+    
+    @property
+    def prompt_cache_target_hit_rate(self):
+        return self.get("prompt_cache.target_hit_rate", 0.7)
+    
+    @property
+    def prompt_cache_alert_threshold(self):
+        return self.get("prompt_cache.alert_threshold", 0.3)
+    
+    @property
+    def prompt_cache_local_cache_backend(self):
+        return self.get("prompt_cache.local_cache_backend", "memory")
+    
+    @property
+    def prompt_cache_vector_cache_backend(self):
+        return self.get("prompt_cache.vector_cache_backend", "none")
+    
+    @property
+    def prompt_cache_file_index_backend(self):
+        return self.get("prompt_cache.file_index_backend", "none")
+    
+    @property
+    def prompt_cache_cache_layers(self):
+        layers = self.get("prompt_cache.cache_layers", ["memory"])
+        if isinstance(layers, str):
+            layers = [layers]
+        return layers
+    
+    def to_dict(self):
+        """Return a copy of the internal config dictionary."""
+        import copy
+        return copy.deepcopy(self._config)
+
+
+# ───────────────────────────────────────────────────────────────
+# Data Models
 # ───────────────────────────────────────────────────────────────
 
 @dataclass
@@ -156,7 +266,7 @@ class PromptCache:
     def _load_config(self, config_path: str) -> None:
         """从 YAML 加载 prompt_cache 配置"""
         try:
-            from config_loader import ConfigLoader
+            # ConfigLoader is now defined in this module
             loader = ConfigLoader(config_path)
             self._config = loader.get_prompt_cache_config()
             self._layers_enabled = loader.prompt_cache_cache_layers
@@ -164,7 +274,7 @@ class PromptCache:
             if self._config.get("local_cache_backend") == "sqlite":
                 # 如果配置指定了 sqlite 后端，自动启用 sqlite
                 pass
-        except Exception:
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError):
             # 配置加载失败时保持默认
             self._config = {}
             self._layers_enabled = ["memory"]
@@ -212,7 +322,7 @@ class PromptCache:
                 cache_hit=cache_hit,
             )
             self._trace_writer.write_trace(trace)
-        except Exception:
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError):
             # trace 写入失败不应影响缓存功能
             pass
 

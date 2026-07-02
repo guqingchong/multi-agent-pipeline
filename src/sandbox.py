@@ -1,7 +1,10 @@
 """src/sandbox.py — Layer 0 最小可行沙箱
 
-实现 5 种 Profile（LOCKDOWN / PIPELINE / ASSISTANT / RESEARCH / FREE）
+实现 6 种 Profile（LOCKDOWN / PIPELINE / ASSISTANT / RESEARCH / FREE / E2E）
 + 命令白名单 + 绕过检测 + 临时授权机制。
+
+E2E_PROFILE: 放行浏览器进程（chromium/chrome/firefox/msedge）和网络白名单域名，
+供 Playwright E2E 测试使用。
 
 验收标准：
 1. Profile 切换命令工作正常
@@ -52,6 +55,7 @@ class Profile(Enum):
     ASSISTANT = "assistant"
     RESEARCH = "research"
     FREE = "free"
+    E2E = "e2e"
 
 
 @dataclass
@@ -108,6 +112,14 @@ PROFILE_CONFIGS: Dict[Profile, ProfileConfig] = {
         command_whitelist_enabled=False,
         audit_only=True,
     ),
+    Profile.E2E: ProfileConfig(
+        name="E2E",
+        description="E2E 测试 — 放行浏览器进程和网络白名单域名",
+        network="白名单域名（被测服务 + 必要CDN/API）",
+        directory="项目目录 + 浏览器临时目录",
+        default_interaction=InteractionLevel.T2_APPROVAL,
+        command_whitelist_enabled=True,
+    ),
 }
 
 
@@ -140,6 +152,8 @@ _ALLOW_PATTERNS: List[Tuple[str, str]] = [
     (r"^(mkdir|touch|cp|copy|mv|move|rm\s+\S+|del\s+\S+)", "文件操作"),
     (r"^(echo|printenv|env|set|whoami|hostname|pwd|cd)", "系统信息查询"),
     (r"^(curl\s+--head|curl\s+-I|ping|nslookup|tracert)", "网络诊断"),
+    (r"^(playwright\s+install|python\s+-m\s+playwright)", "Playwright 浏览器管理"),
+    (r"(chromium|chrome|firefox|msedge|msedgewebview2)(\.exe)?", "浏览器进程（E2E 测试）"),
 ]
 
 # 需要确认的高风险操作

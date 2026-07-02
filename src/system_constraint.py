@@ -6,6 +6,9 @@
 - 测试任务 → Qwen Code
 - Hermes 仅限编排权限，禁止直接执行编码/审核/测试任务
 
+本模块从 src/registry.py 的 REGISTRY 读取任务类型与 Agent 定义，
+不再硬编码映射表。
+
 验收标准：
 1. 约束层自动拦截违规操作
 2. 约束层单元测试通过
@@ -15,8 +18,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional
+
+try:
+    from registry import REGISTRY
+except ModuleNotFoundError:
+    from src.registry import REGISTRY
 
 
 # ───────────────────────────────────────────────────────────────
@@ -63,55 +70,46 @@ class HermesPermissionDenied(ConstraintViolation):
 
 
 # ───────────────────────────────────────────────────────────────
-# 任务类型枚举
+# Adapter 名称（从 REGISTRY 读取，禁止角色扮演）
 # ───────────────────────────────────────────────────────────────
 
-class TaskType(Enum):
-    """系统支持的任务类型"""
-    CODE = "code"           # 编码/开发任务
-    REVIEW = "review"       # 代码审核任务
-    TEST = "test"           # 测试任务（单元测试/E2E）
-    DOC = "doc"             # 文档生成任务
-    E2E = "e2e"             # E2E 测试任务
-    ORCHESTRATE = "orchestrate"  # 编排/协调任务（仅限 Hermes）
-    DEPLOY = "deploy"       # 部署任务
-    ANALYZE = "analyze"   # 分析任务
+# 真实 CLI Agent 名称常量（非枚举/非角色，仅字符串标识）
+ADAPTER_CLAUDE = REGISTRY.get_agent("claude-code").name      # Claude Code CLI — 编码
+ADAPTER_CODEWHALE = REGISTRY.get_agent("codewhale").name     # CodeWhale CLI — 审核
+ADAPTER_QWEN = REGISTRY.get_agent("qwen-code").name          # Qwen Code CLI — 测试/E2E/文档
+# 注意：Hermes 自身不是 Agent，是编排器。不在此列表中。
 
 
 # ───────────────────────────────────────────────────────────────
-# Agent 标识枚举
+# Hermes 自身处理的任务类型（不在 REGISTRY 中注册）
 # ───────────────────────────────────────────────────────────────
 
-class Agent(Enum):
-    """系统中可用的 Agent"""
-    CLAUDE = "claude"       # Claude Code — 编码专家
-    CODEWHALE = "codewhale" # CodeWhale — 审核专家
-    QWEN = "qwen"           # Qwen Code — 测试专家
-    HERMES = "hermes"       # Hermes — 编排器（仅协调）
-
-
-# ───────────────────────────────────────────────────────────────
-# 任务类型到 Agent 的映射（系统级约束核心）
-# ───────────────────────────────────────────────────────────────
-
-TASK_AGENT_MAP: Dict[TaskType, Agent] = {
-    TaskType.CODE: Agent.CLAUDE,
-    TaskType.REVIEW: Agent.CODEWHALE,
-    TaskType.TEST: Agent.QWEN,
-    TaskType.DOC: Agent.QWEN,
-    TaskType.E2E: Agent.QWEN,
-    TaskType.ORCHESTRATE: Agent.HERMES,
-    TaskType.DEPLOY: Agent.HERMES,
-    TaskType.ANALYZE: Agent.HERMES,
+_HERMES_ONLY_TASKS: Dict[str, str] = {
+    "orchestrate": "",   # 编排/协调任务（仅限 Hermes）
+    "deploy": "",        # 部署任务
+    "analyze": "",       # 分析任务
 }
 
-# Agent 能力映射（反向查询）
-AGENT_CAPABILITIES: Dict[Agent, List[TaskType]] = {
-    Agent.CLAUDE: [TaskType.CODE],
-    Agent.CODEWHALE: [TaskType.REVIEW],
-    Agent.QWEN: [TaskType.TEST, TaskType.DOC, TaskType.E2E],
-    Agent.HERMES: [TaskType.ORCHESTRATE, TaskType.DEPLOY, TaskType.ANALYZE],
+
+# ───────────────────────────────────────────────────────────────
+# 任务类型到真实 CLI Adapter 的映射（从 REGISTRY 生成）
+# ───────────────────────────────────────────────────────────────
+
+# Adapter 能力映射（反向查询，从 REGISTRY.agents 生成）
+ADAPTER_CAPABILITIES: Dict[str, List[str]] = {
+    agent.name: list(agent.capabilities) for agent in REGISTRY.agents.values()
 }
+
+# 向后兼容别名（逐步迁移）
+Agent = type('Agent', (), {
+    'CLAUDE': ADAPTER_CLAUDE,
+    'CODEWHALE': ADAPTER_CODEWHALE,
+    'QWEN': ADAPTER_QWEN,
+    'HERMES': 'hermes',  # 向后兼容，但标记为废弃
+})
+TASK_AGENT_MAP = {name: task_type.default_agent for name, task_type in REGISTRY.task_types.items()}
+TASK_AGENT_MAP.update(_HERMES_ONLY_TASKS)
+AGENT_CAPABILITIES = ADAPTER_CAPABILITIES
 
 
 # ───────────────────────────────────────────────────────────────
@@ -129,8 +127,8 @@ class ConstraintConfig:
     _emergency_password_hash: Optional[str] = None
     # 违规回调（用于日志/告警）
     violation_callbacks: List[Callable[[ConstraintViolation], None]] = field(default_factory=list)
-    # 路由成功回调
-    route_callbacks: List[Callable[[TaskType, Agent, Any], None]] = field(default_factory=list)
+    # 路由成功回调（参数：task_type, target_adapter, spec）
+    route_callbacks: List[Callable[[str, str, Any], None]] = field(default_factory=list)
 
     def set_emergency_password(self, password: str) -> None:
         """设置紧急模式密码（存储简单哈希）"""
@@ -223,44 +221,36 @@ class SystemConstraint:
         """
         import time
 
-        # 解析任务类型
-        try:
-            tt = TaskType(task_type)
-        except ValueError:
+        # 解析任务类型：优先从 REGISTRY 查询，再识别 Hermes 自身任务
+        task_def = REGISTRY.get_task_type(task_type)
+        if task_def is not None:
+            target_adapter = task_def.default_agent
+        elif task_type in _HERMES_ONLY_TASKS:
+            target_adapter = ""
+        else:
             raise ConstraintViolation(
                 f"Unknown task type: {task_type}",
                 task_type=task_type,
                 action="route_task",
             )
 
-        # 确定目标 Agent
-        target_agent = TASK_AGENT_MAP.get(tt)
-        if target_agent is None:
+        # 确定目标 Adapter（空字符串表示由 Hermes 自身处理）
+        if target_adapter is None:
             raise ConstraintViolation(
-                f"No agent mapped for task type: {task_type}",
+                f"No adapter mapped for task type: {task_type}",
                 task_type=task_type,
                 action="route_task",
             )
 
-        # 校验请求指定的 Agent（如果提供了）
+        # 校验请求指定的 Adapter（如果提供了）
         if requested_agent is not None:
-            try:
-                req_agent = Agent(requested_agent)
-            except ValueError:
+            if requested_agent != target_adapter:
                 raise ConstraintViolation(
-                    f"Unknown requested agent: {requested_agent}",
-                    task_type=task_type,
-                    attempted_agent=requested_agent,
-                    required_agent=target_agent.value,
-                    action="route_task",
-                )
-            if req_agent != target_agent:
-                raise ConstraintViolation(
-                    f"Task '{task_type}' must be routed to '{target_agent.value}', "
+                    f"Task '{task_type}' must be routed to '{target_adapter}', "
                     f"but requested '{requested_agent}'",
                     task_type=task_type,
                     attempted_agent=requested_agent,
-                    required_agent=target_agent.value,
+                    required_agent=target_adapter,
                     action="route_task",
                 )
 
@@ -275,8 +265,8 @@ class SystemConstraint:
         # 构建路由结果
         self._route_count += 1
         result = {
-            "task_type": tt.value,
-            "target_agent": target_agent.value,
+            "task_type": task_type,
+            "target_adapter": target_adapter,
             "spec": spec,
             "routed_at": time.time(),
             "constraint_enforced": True,
@@ -285,8 +275,8 @@ class SystemConstraint:
         # 触发路由回调
         for cb in self.config.route_callbacks:
             try:
-                cb(tt, target_agent, spec)
-            except Exception:
+                cb(task_type, target_adapter, spec)
+            except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError):
                 pass
 
         return result
@@ -375,9 +365,8 @@ class SystemConstraint:
         Raises:
             HermesPermissionDenied: 当 Hermes 不能执行该任务时
         """
-        try:
-            tt = TaskType(task_type)
-        except ValueError:
+        target_adapter = TASK_AGENT_MAP.get(task_type)
+        if target_adapter is None:
             # 未知任务类型，在严格模式下拒绝
             if self.config.strict_mode:
                 self._violation_count += 1
@@ -389,15 +378,15 @@ class SystemConstraint:
                 )
             return
 
-        target_agent = TASK_AGENT_MAP.get(tt)
-        if target_agent != Agent.HERMES:
+        # 空字符串或 'hermes' 表示 Hermes 自身处理的任务
+        if target_adapter and target_adapter != 'hermes':
             self._violation_count += 1
             violation = HermesPermissionDenied(
                 f"Hermes cannot execute '{task_type}' tasks. "
-                f"These must be routed to '{target_agent.value}'.",
+                f"These must be routed to adapter '{target_adapter}'.",
                 task_type=task_type,
                 attempted_agent="hermes",
-                required_agent=target_agent.value,
+                required_agent=target_adapter,
                 action="check_hermes_task",
             )
             self._notify_violation(violation)
@@ -471,53 +460,40 @@ class SystemConstraint:
     # 查询方法
     # ───────────────────────────────────────────────────────────
 
-    def get_agent_for_task(self, task_type: str) -> Optional[str]:
-        """获取任务类型对应的目标 Agent
-
-        Args:
-            task_type: 任务类型
-
-        Returns:
-            Agent 名称，或 None（如果任务类型无效）
+    def get_adapter_for_task(self, task_type: str) -> Optional[str]:
+        """获取任务类型对应的目标 Adapter。
+        空字符串表示 Hermes 自身处理，None 表示无效任务类型。
         """
-        try:
-            tt = TaskType(task_type)
-            agent = TASK_AGENT_MAP.get(tt)
-            return agent.value if agent else None
-        except ValueError:
-            return None
+        adapter = TASK_AGENT_MAP.get(task_type)
+        # None 表示任务类型不在映射中 → 无效
+        # 空字符串表示由 Hermes 处理 → 有效
+        return adapter if adapter is not None else None
 
-    def get_allowed_tasks_for_agent(self, agent: str) -> List[str]:
-        """获取 Agent 允许执行的任务类型列表
+    def get_allowed_tasks_for_adapter(self, adapter: str) -> List[str]:
+        """获取 Adapter 允许执行的任务类型列表
 
         Args:
-            agent: Agent 名称
+            adapter: Adapter 名称（如 'claude-code', 'codewhale', 'qwen-code'）
 
         Returns:
             任务类型列表
         """
-        try:
-            ag = Agent(agent)
-            return [tt.value for tt in AGENT_CAPABILITIES.get(ag, [])]
-        except ValueError:
-            return []
+        return list(ADAPTER_CAPABILITIES.get(adapter, []))
 
+    # 向后兼容别名
+    def get_agent_for_task(self, task_type: str) -> Optional[str]:
+        return self.get_adapter_for_task(task_type)
+
+    def get_allowed_tasks_for_agent(self, agent: str) -> List[str]:
+        return self.get_allowed_tasks_for_adapter(agent)
+
+    def can_adapter_execute(self, adapter: str, task_type: str) -> bool:
+        """检查 Adapter 是否可以执行指定任务类型"""
+        return task_type in ADAPTER_CAPABILITIES.get(adapter, [])
+
+    # 向后兼容
     def can_agent_execute(self, agent: str, task_type: str) -> bool:
-        """检查 Agent 是否可以执行指定任务类型
-
-        Args:
-            agent: Agent 名称
-            task_type: 任务类型
-
-        Returns:
-            是否可以执行
-        """
-        try:
-            ag = Agent(agent)
-            tt = TaskType(task_type)
-            return tt in AGENT_CAPABILITIES.get(ag, [])
-        except ValueError:
-            return False
+        return self.can_adapter_execute(agent, task_type)
 
     def is_hermes_action_allowed(self, action: str) -> bool:
         """检查 Hermes 操作是否被允许（不抛出异常）
@@ -543,7 +519,7 @@ class SystemConstraint:
         for cb in self.config.violation_callbacks:
             try:
                 cb(violation)
-            except Exception:
+            except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError):
                 pass
 
     def reset_stats(self) -> None:
@@ -556,14 +532,14 @@ class SystemConstraint:
 # 便捷函数
 # ───────────────────────────────────────────────────────────────
 
+def get_task_adapter(task_type: str) -> Optional[str]:
+    """获取任务类型对应的目标 Adapter（全局便捷函数）"""
+    adapter = TASK_AGENT_MAP.get(task_type)
+    return adapter or None  # 空字符串视为 Hermes 自身，返回 None
+
+# 向后兼容
 def get_task_agent(task_type: str) -> Optional[str]:
-    """获取任务类型对应的目标 Agent（全局便捷函数）"""
-    try:
-        tt = TaskType(task_type)
-        agent = TASK_AGENT_MAP.get(tt)
-        return agent.value if agent else None
-    except ValueError:
-        return None
+    return get_task_adapter(task_type)
 
 
 def assert_hermes_orchestration(action: str) -> None:

@@ -1,0 +1,346 @@
+{
+    "project": "multi-agent-pipeline",
+    "version": "2.0.0",
+    "schema_version": 2,
+    "generated_by": "Hermes-Architecture-Redesign",
+    "generation_date": "2026-06-26",
+    "notes": "Architecture v2.0 redesign. Key changes: (1) DB is primary state source, features.json is static config; (2) Wave is advisory, not enforced; (3) Agent communication supports fallback channels; (4) Approval supports both granular and blanket modes; (5) GitHub sync is bidirectional.",
+    "features": [
+        {
+            "id": "F001",
+            "title": "Extract shared models.py",
+            "description": "Move Phase, ProjectState, Feature dataclasses from pipeline.py and state_store.py into a dedicated models.py to eliminate circular imports.",
+            "status": "pending",
+            "owner_agent": "claude",
+            "estimated_complexity": "medium",
+            "dependencies": [],
+            "wave": 1,
+            "max_token_budget": 30000,
+            "acceptance_criteria": [
+                {
+                    "type": "command",
+                    "description": "python -c 'import models; import pipeline; import state_store' succeeds without circular import errors",
+                    "payload": "python -c 'import models; import pipeline; import state_store'"
+                },
+                {
+                    "type": "test",
+                    "description": "All existing tests pass after refactoring",
+                    "payload": "pytest tests/ -v --tb=short"
+                },
+                {
+                    "type": "assertion",
+                    "description": "No module imports itself directly or indirectly",
+                    "payload": "python -c 'import sys; sys.path.insert(0, \"src\"); from models import Phase, ProjectState; print(\"OK\")'"
+                }
+            ]
+        },
+        {
+            "id": "F002",
+            "title": "Add unified configuration management (config.py)",
+            "description": "Create PipelineConfig using pydantic-settings to replace hardcoded constants across all modules. Support environment variable overrides.",
+            "status": "pending",
+            "owner_agent": "claude",
+            "estimated_complexity": "medium",
+            "dependencies": ["F001"],
+            "wave": 1,
+            "max_token_budget": 30000,
+            "acceptance_criteria": [
+                {
+                    "type": "command",
+                    "description": "Config loads from environment variables with PIPELINE_ prefix",
+                    "payload": "PIPELINE_BASE_DIR=/tmp/test python -c 'from config import PipelineConfig; c = PipelineConfig(); print(c.base_dir)'"
+                },
+                {
+                    "type": "test",
+                    "description": "Config validation tests pass",
+                    "payload": "pytest tests/test_config.py -v"
+                },
+                {
+                    "type": "assertion",
+                    "description": "No hardcoded paths remain in bridge_cli.py or pipeline.py",
+                    "payload": "grep -r 'C:/tmp' src/bridge_cli.py src/pipeline.py || echo 'No hardcoded paths'"
+                }
+            ]
+        },
+        {
+            "id": "F003",
+            "title": "Enhance DB schema v2 and add migration",
+            "description": "Add wave, dependencies, acceptance_criteria, token_cost columns to features table. Create github_sync table. Provide v1-to-v2 migration script.",
+            "status": "pending",
+            "owner_agent": "claude",
+            "estimated_complexity": "complex",
+            "dependencies": ["F001", "F002"],
+            "wave": 2,
+            "max_token_budget": 50000,
+            "acceptance_criteria": [
+                {
+                    "type": "command",
+                    "description": "Migration script runs successfully on existing v1 database",
+                    "payload": "python src/migrate_v1_to_v2.py C:/tmp/multi-agent-pipeline/pipeline_state.db"
+                },
+                {
+                    "type": "test",
+                    "description": "DB schema tests verify all new columns exist",
+                    "payload": "pytest tests/test_state_store.py::test_schema_v2 -v"
+                },
+                {
+                    "type": "assertion",
+                    "description": "features.json can be imported into DB and exported back identically",
+                    "payload": "python -c 'from state_store import StateStore; s = StateStore(); s.import_features(\"features.json\"); s.export_features(\"/tmp/features_export.json\")'"
+                }
+            ]
+        },
+        {
+            "id": "F004",
+            "title": "Implement bidirectional GitHub sync",
+            "description": "Create github_sync.py to synchronize feature status between DB and GitHub Issues. Support issue creation, status updates, and PR linking.",
+            "status": "pending",
+            "owner_agent": "claude",
+            "estimated_complexity": "complex",
+            "dependencies": ["F003"],
+            "wave": 2,
+            "max_token_budget": 50000,
+            "acceptance_criteria": [
+                {
+                    "type": "command",
+                    "description": "GitHub sync creates issues for all pending features",
+                    "payload": "python src/github_sync.py --create-issues --project multi-agent-pipeline"
+                },
+                {
+                    "type": "test",
+                    "description": "Bidirectional sync tests pass with mock GitHub API",
+                    "payload": "pytest tests/test_github_sync.py -v"
+                },
+                {
+                    "type": "assertion",
+                    "description": "DB github_sync table records all sync operations",
+                    "payload": "python -c 'import sqlite3; c = sqlite3.connect(\"pipeline_state.db\"); print(c.execute(\"SELECT COUNT(*) FROM github_sync\").fetchone()[0])'"
+                }
+            ]
+        },
+        {
+            "id": "F005",
+            "title": "Refactor agent communication with fallback channels",
+            "description": "Update adapters.py to support FileBasedChannel and MCPChannel as fallbacks when delegate_task times out. Implement channel selection strategy.",
+            "status": "pending",
+            "owner_agent": "claude",
+            "estimated_complexity": "complex",
+            "dependencies": ["F001", "F002"],
+            "wave": 3,
+            "max_token_budget": 60000,
+            "acceptance_criteria": [
+                {
+                    "type": "command",
+                    "description": "File-based channel dispatches task and collects result",
+                    "payload": "python -c 'from adapters import FileBasedChannel; ch = FileBasedChannel(); ch.dispatch(\"claude\", {\"id\":\"test\"}); print(ch.collect(\"test\", timeout=5))'"
+                },
+                {
+                    "type": "test",
+                    "description": "Channel fallback tests verify delegate_task timeout triggers file-based fallback",
+                    "payload": "pytest tests/test_adapters.py::test_channel_fallback -v"
+                },
+                {
+                    "type": "assertion",
+                    "description": "AgentDispatcher tries all channels before failing",
+                    "payload": "python -c 'from adapters import AgentDispatcher; d = AgentDispatcher(); print(d.channels)'"
+                }
+            ]
+        },
+        {
+            "id": "F006",
+            "title": "Integrate flexible approval system",
+            "description": "Refactor approval.py to support both GranularApproval (L1/L2/L3) and BlanketApproval modes. Integrate into pipeline.py phase transitions.",
+            "status": "pending",
+            "owner_agent": "claude",
+            "estimated_complexity": "medium",
+            "dependencies": ["F001"],
+            "wave": 3,
+            "max_token_budget": 40000,
+            "acceptance_criteria": [
+                {
+                    "type": "command",
+                    "description": "Blanket approval mode allows auto-advance without human intervention",
+                    "payload": "python -c 'from approval import BlanketApproval; a = BlanketApproval(\"user\", {\"phases\":[\"design\",\"accept\"]}); print(a.is_authorized(\"design\", \"F001\"))'"
+                },
+                {
+                    "type": "test",
+                    "description": "Approval mode tests pass for both granular and blanket",
+                    "payload": "pytest tests/test_approval.py -v"
+                },
+                {
+                    "type": "assertion",
+                    "description": "Pipeline respects approval mode configuration",
+                    "payload": "python -c 'from pipeline import Pipeline; p = Pipeline(approval_mode=\"blanket\"); print(p.approval.__class__.__name__)'"
+                }
+            ]
+        },
+        {
+            "id": "F007",
+            "title": "Unify exception hierarchy",
+            "description": "Replace mixed exception handling with unified PipelineException hierarchy. Update all modules to use consistent error types.",
+            "status": "pending",
+            "owner_agent": "claude",
+            "estimated_complexity": "medium",
+            "dependencies": ["F001"],
+            "wave": 3,
+            "max_token_budget": 30000,
+            "acceptance_criteria": [
+                {
+                    "type": "command",
+                    "description": "All custom exceptions inherit from PipelineException",
+                    "payload": "python -c 'from models import PipelineException, ConstraintViolation, PhaseCheckFailed; print(issubclass(ConstraintViolation, PipelineException))'"
+                },
+                {
+                    "type": "test",
+                    "description": "Exception hierarchy tests pass",
+                    "payload": "pytest tests/test_exceptions.py -v"
+                },
+                {
+                    "type": "assertion",
+                    "description": "No bare except: or generic Exception catching in core modules",
+                    "payload": "grep -r 'except Exception' src/pipeline.py src/phase_checks.py src/phase_flow.py || echo 'Clean'"
+                }
+            ]
+        },
+        {
+            "id": "F008",
+            "title": "Distinguish suggest mode vs auto-advance mode",
+            "description": "Update suggestion_engine.py to properly implement requires_approval flag. Add mode parameter to SuggestionEngine.",
+            "status": "pending",
+            "owner_agent": "claude",
+            "estimated_complexity": "medium",
+            "dependencies": ["F001"],
+            "wave": 3,
+            "max_token_budget": 30000,
+            "acceptance_criteria": [
+                {
+                    "type": "command",
+                    "description": "Suggest mode returns requires_approval=True",
+                    "payload": "python -c 'from suggestion_engine import SuggestionEngine, SuggestionType; e = SuggestionEngine(\"test\"); s = e.suggest_next_phase(None, mode=\"suggest\"); print(s.requires_approval)'"
+                },
+                {
+                    "type": "test",
+                    "description": "Suggestion mode tests verify both suggest and auto modes",
+                    "payload": "pytest tests/test_suggestion_engine.py -v"
+                },
+                {
+                    "type": "assertion",
+                    "description": "Auto mode does not require approval",
+                    "payload": "python -c 'from suggestion_engine import SuggestionEngine; e = SuggestionEngine(\"test\"); s = e.suggest_next_phase(None, mode=\"auto\"); print(not s.requires_approval)'"
+                }
+            ]
+        },
+        {
+            "id": "F009",
+            "title": "Add comprehensive tests for core modules",
+            "description": "Create tests for pipeline.py, bridge_cli.py, approval.py, and other previously untested core modules.",
+            "status": "pending",
+            "owner_agent": "qwen",
+            "estimated_complexity": "medium",
+            "dependencies": ["F001", "F002", "F006", "F007"],
+            "wave": 4,
+            "max_token_budget": 40000,
+            "acceptance_criteria": [
+                {
+                    "type": "test",
+                    "description": "pipeline.py integration tests pass (init, check, advance, rollback)",
+                    "payload": "pytest tests/test_pipeline.py -v"
+                },
+                {
+                    "type": "test",
+                    "description": "bridge_cli.py command tests pass (load, route, suggest, check-hermes)",
+                    "payload": "pytest tests/test_bridge_cli.py -v"
+                },
+                {
+                    "type": "assertion",
+                    "description": "Coverage for core modules exceeds 80%",
+                    "payload": "pytest --cov=src/pipeline --cov=src/bridge_cli --cov=src/approval --cov-report=term-missing tests/"
+                }
+            ]
+        },
+        {
+            "id": "F010",
+            "title": "Clean up Chinese comments and add English docstrings",
+            "description": "Remove Chinese comments from core modules. Add comprehensive English docstrings. Keep user-facing docs (README, DEPLOY) in Chinese.",
+            "status": "pending",
+            "owner_agent": "claude",
+            "estimated_complexity": "medium",
+            "dependencies": ["F001"],
+            "wave": 4,
+            "max_token_budget": 30000,
+            "acceptance_criteria": [
+                {
+                    "type": "command",
+                    "description": "Core modules have no Chinese characters in comments",
+                    "payload": "python -c 'import re; files=[\"src/pipeline.py\",\"src/state_store.py\",\"src/system_constraint.py\"]; [print(f, len(re.findall(r[\"[\\u4e00-\\u9fff]\"], open(f).read()))) for f in files]'"
+                },
+                {
+                    "type": "assertion",
+                    "description": "All public functions have English docstrings",
+                    "payload": "python -m pydoc src.pipeline | head -50"
+                },
+                {
+                    "type": "manual",
+                    "description": "User-facing docs (README, DEPLOY) remain in Chinese",
+                    "payload": "Verify README.md and DEPLOY.md are still Chinese"
+                }
+            ]
+        },
+        {
+            "id": "F011",
+            "title": "Implement tool self-hosting",
+            "description": "Use multi-agent-pipeline to manage its own v2.0 development. Create project record, track features through DB, sync with GitHub.",
+            "status": "pending",
+            "owner_agent": "hermes",
+            "estimated_complexity": "complex",
+            "dependencies": ["F003", "F004", "F005", "F006", "F007", "F008", "F009"],
+            "wave": 5,
+            "max_token_budget": 50000,
+            "acceptance_criteria": [
+                {
+                    "type": "command",
+                    "description": "pipeline.py init creates project with DB record and features.json import",
+                    "payload": "python src/pipeline.py init multi-agent-pipeline-v2 --base-dir /tmp"
+                },
+                {
+                    "type": "assertion",
+                    "description": "DB records all v2.0 feature development activities",
+                    "payload": "python -c 'import sqlite3; c = sqlite3.connect(\"/tmp/multi-agent-pipeline-v2/pipeline_state.db\"); print(c.execute(\"SELECT COUNT(*) FROM features\").fetchone()[0])'"
+                },
+                {
+                    "type": "manual",
+                    "description": "GitHub Issues created for all v2.0 features",
+                    "payload": "Verify GitHub repo has issues for F001-F011"
+                }
+            ]
+        },
+        {
+            "id": "F012",
+            "title": "Generate final architecture documentation and migration guide",
+            "description": "Create comprehensive docs: architecture.md (this doc), migration_guide.md, changelog.md. Update README and DEPLOY.",
+            "status": "pending",
+            "owner_agent": "claude",
+            "estimated_complexity": "medium",
+            "dependencies": ["F010"],
+            "wave": 5,
+            "max_token_budget": 30000,
+            "acceptance_criteria": [
+                {
+                    "type": "assertion",
+                    "description": "docs/architecture_v2.md exists and is complete",
+                    "payload": "test -f docs/architecture_v2.md && wc -l docs/architecture_v2.md"
+                },
+                {
+                    "type": "assertion",
+                    "description": "docs/migration_guide.md exists with step-by-step instructions",
+                    "payload": "test -f docs/migration_guide.md"
+                },
+                {
+                    "type": "manual",
+                    "description": "README and DEPLOY updated for v2.0",
+                    "payload": "Verify README mentions v2.0 and new features"
+                }
+            ]
+        }
+    ]
+}

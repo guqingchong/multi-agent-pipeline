@@ -46,9 +46,9 @@ except ModuleNotFoundError:
     from src.phase_flow import PhaseFlow, PHASE_ORDER
 
 try:
-    from system_constraint import SystemConstraint, TaskType, Agent, ConstraintViolation
+    from system_constraint import SystemConstraint, ConstraintViolation
 except ModuleNotFoundError:
-    from src.system_constraint import SystemConstraint, TaskType, Agent, ConstraintViolation
+    from src.system_constraint import SystemConstraint, ConstraintViolation
 
 
 # ───────────────────────────────────────────────────────────────
@@ -56,10 +56,10 @@ except ModuleNotFoundError:
 # ───────────────────────────────────────────────────────────────
 
 class SuggestionType(Enum):
-    """建议类型"""
-    ADVANCE = "advance"   # 建议推进到下一 phase
-    BLOCKER = "blocker"     # 存在阻塞，无法推进
-    INFO = "info"           # 信息性建议（已在最终阶段等）
+    """Suggestion type: advisory only, not enforced."""
+    ADVANCE = "advance"   # Suggest advancing to next phase
+    BLOCKER = "blocker"     # Blockers exist, cannot advance
+    INFO = "info"           # Informational (already at final phase, etc.)
 
 
 # ───────────────────────────────────────────────────────────────
@@ -359,7 +359,7 @@ class SuggestionEngine:
         """从 flow 加载状态字典"""
         try:
             return self.flow._load_state()
-        except Exception:
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError):
             return None
 
     def _requires_approval(self, phase: str, state: Dict[str, Any]) -> bool:
@@ -379,22 +379,38 @@ class SuggestionEngine:
         """
         try:
             # 根据 phase 映射到任务类型
-            phase_task_map = {
-                "init": TaskType.ORCHESTRATE,
-                "design": TaskType.ANALYZE,
-                "decompose": TaskType.ANALYZE,
-                "develop": TaskType.CODE,
-                "test": TaskType.TEST,
-                "accept": TaskType.REVIEW,
-                "deploy": TaskType.DEPLOY,
+            # Greenfield 阶段映射
+            greenfield_phase_task_map = {
+                "init": "orchestrate",
+                "design": "analyze",
+                "decompose": "analyze",
+                "develop": "code",
+                "test": "test",
+                "accept": "review",
+                "deploy": "deploy",
             }
+            
+            # Brownfield 阶段映射
+            brownfield_phase_task_map = {
+                "discover": "analyze",      # 发现阶段 - 分析现有系统
+                "benchmark": "analyze",     # 对标阶段 - 分析基准数据
+                "analyze": "analyze",       # 分析阶段 - 深入分析问题
+                "plan": "analyze",          # 计划阶段 - 制定优化方案
+                "execute": "code",          # 执行阶段 - 实施优化
+                "verify": "test",           # 验证阶段 - 验证优化效果
+                "deliver": "review",        # 交付阶段 - 审核优化成果
+            }
+            
+            # 合并两个映射
+            phase_task_map = {**greenfield_phase_task_map, **brownfield_phase_task_map}
+            
             task_type = phase_task_map.get(phase)
             if task_type is not None:
-                target_agent = self.constraint.get_agent_for_task(task_type.value)
+                target_agent = self.constraint.get_agent_for_task(task_type)
                 if target_agent is None:
                     return False, f"phase '{phase}' 没有对应的路由 Agent"
             return True, ""
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
             return False, str(e)
 
     def _check_state_blockers(self, phase: str, state: Dict[str, Any]) -> List[str]:

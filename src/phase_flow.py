@@ -1,7 +1,8 @@
-"""src/phase_flow.py — Phase 0-6 完整流程编排
+"""src/phase_flow.py — Phase 0-6 完整流程编排（v3.0 12 Phase）
 
-PhaseFlow 类管理 Phase 0-6 流转：
-  init → design → decompose → develop → test → accept → deploy
+PhaseFlow 类管理 v3.0 12 Phase 流转：
+  init → design → decompose → research → prd → journey →
+  develop → integrate → test → evaluate → accept → deploy
 
 每个 advance 必须通过 check 函数，否则 BLOCK。
 支持 rollback-phase 回退（需人工审批）。
@@ -36,13 +37,18 @@ try:
 except ModuleNotFoundError:
     from src.state_store import StateStore
 
+try:
+    from config import get_config
+except (ModuleNotFoundError, ImportError):
+    from src.config import get_config
+
 
 # ───────────────────────────────────────────────────────────────
 # 常量 / 配置
 # ───────────────────────────────────────────────────────────────
 
-PHASE_ORDER = ["init", "design", "decompose", "develop", "test", "accept", "deploy"]
-DB_FILENAME = "pipeline_state.db"
+PHASE_ORDER = get_config().phase_order
+DB_FILENAME = get_config().db_name
 
 
 # ───────────────────────────────────────────────────────────────
@@ -56,7 +62,7 @@ class PhaseFlow:
       1. 管理 phase 顺序（init → design → ... → deploy）
       2. 执行 advance 前自动调用对应 check 函数
       3. 支持 rollback 到指定 phase（需人工审批）
-      4. 维护审批状态（design_approved / accept_approved）
+      4. 维护Approval status（design_approved / accept_approved）
       5. 持久化到 SQLite（通过 state_store）
     """
 
@@ -76,7 +82,7 @@ class PhaseFlow:
             raw = self.store.legacy_load("state")
             if raw is not None:
                 return json.loads(raw)
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             pass
         return None
 

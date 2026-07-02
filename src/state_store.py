@@ -1,13 +1,15 @@
-"""src/state_store.py — Layer 2 SQLite 状态持久化与检查点层
+"""src/state_store.py — Layer 2 SQLite state persistence and checkpoint layer
 
-实现 PRD 3.2 节定义的完整表结构：
+Implements the full table structure defined in PRD section 3.2:
   projects / features / checkpoints / traces / audit_logs / model_health
+  dispatch_history / approval_records
 
-核心能力：
-  - 每个有意义 action 后自动 checkpoint
-  - 支持 resume 从最新 checkpoint 恢复
-  - 支持 rollback 到指定 checkpoint
-  - schema 版本控制（v1）
+Core capabilities:
+  - Auto checkpoint after every meaningful action
+  - Resume from latest checkpoint
+  - Rollback to a specific checkpoint
+  - Schema version control (v2)
+  - Dispatch history for strategy advice (sync/async)
 """
 
 from __future__ import annotations
@@ -21,18 +23,20 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 # ───────────────────────────────────────────────────────────────
-# 常量 / 配置
+# Constants / Config
 # ───────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-# PRD 定义的核心表 DDL
+# PRD defined core table DDL (v2)
+# Added: features.wave, features.dependencies_json, features.acceptance_criteria_json
+#        features.github_issue_number, features.sync_status
 CORE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     current_phase TEXT NOT NULL,
-    schema_version INTEGER DEFAULT 1,
+    schema_version INTEGER DEFAULT 2,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -45,6 +49,11 @@ CREATE TABLE IF NOT EXISTS features (
     status TEXT CHECK(status IN ('pending','in_progress','review','test','passed','failed','needs_rework')),
     owner_agent TEXT,
     token_cost INTEGER DEFAULT 0,
+    wave INTEGER DEFAULT 0,
+    dependencies_json TEXT DEFAULT '[]',
+    acceptance_criteria_json TEXT DEFAULT '[]',
+    github_issue_number INTEGER,
+    sync_status TEXT CHECK(sync_status IN ('unsynced','syncing','synced','failed')) DEFAULT 'unsynced',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -93,9 +102,39 @@ CREATE TABLE IF NOT EXISTS model_health (
     error_message TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS approval_records (
+    id TEXT PRIMARY KEY,
+    project_id TEXT,
+    operation TEXT NOT NULL,
+    level TEXT NOT NULL,
+    risk TEXT DEFAULT 'low',
+    cost REAL DEFAULT 0.0,
+    alternatives_json TEXT DEFAULT '[]',
+    metadata_json TEXT DEFAULT '{}',
+    status TEXT DEFAULT 'pending',
+    summary TEXT DEFAULT '',
+    created_at REAL NOT NULL,
+    resolved_at REAL,
+    checkpoint_id INTEGER,
+    db_created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT,
+    agent TEXT,
+    task_type TEXT,
+    success BOOLEAN DEFAULT FALSE,
+    latency_ms INTEGER DEFAULT 0,
+    exec_mode TEXT DEFAULT 'async',
+    output TEXT,
+    error TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
-# 向后兼容：F005 的 project_state 表（单 key-value 存储）
+# Backward compatibility: F005 project_state table (single key-value store)
 LEGACY_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS project_state (
     key TEXT PRIMARY KEY,
@@ -103,14 +142,13 @@ CREATE TABLE IF NOT EXISTS project_state (
 );
 """
 
-
 # ───────────────────────────────────────────────────────────────
-# 数据模型
+# Data Models
 # ───────────────────────────────────────────────────────────────
 
 @dataclass
 class ProjectRecord:
-    """projects 表记录"""
+    """projects table record"""
     id: str
     name: str
     current_phase: str
@@ -121,7 +159,7 @@ class ProjectRecord:
 
 @dataclass
 class FeatureRecord:
-    """features 表记录"""
+    """features table record (v2)"""
     id: str
     project_id: str
     title: str
@@ -129,13 +167,18 @@ class FeatureRecord:
     status: str = "pending"
     owner_agent: str = ""
     token_cost: int = 0
+    wave: int = 0
+    dependencies: List[str] = field(default_factory=list)
+    acceptance_criteria: List[str] = field(default_factory=list)
+    github_issue_number: Optional[int] = None
+    sync_status: str = "unsynced"
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
 
 @dataclass
 class CheckpointRecord:
-    """checkpoints 表记录"""
+    """checkpoints table record"""
     id: Optional[int] = None
     project_id: str = ""
     phase: str = ""
@@ -149,7 +192,7 @@ class CheckpointRecord:
 
 @dataclass
 class TraceRecord:
-    """traces 表记录"""
+    """traces table record"""
     id: Optional[int] = None
     project_id: Optional[str] = None
     feature_id: Optional[str] = None
@@ -166,7 +209,7 @@ class TraceRecord:
 
 @dataclass
 class AuditLogRecord:
-    """audit_logs 表记录"""
+    """audit_logs table record"""
     id: Optional[int] = None
     project_id: Optional[str] = None
     agent: Optional[str] = None
@@ -175,30 +218,47 @@ class AuditLogRecord:
     created_at: Optional[str] = None
 
 
+@dataclass
+class DispatchHistoryRecord:
+    """dispatch_history table record"""
+    id: Optional[int] = None
+    task_id: Optional[str] = None
+    agent: Optional[str] = None
+    task_type: Optional[str] = None
+    success: bool = False
+    latency_ms: int = 0
+    exec_mode: str = "async"
+    output: Optional[str] = None
+    error: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 # ───────────────────────────────────────────────────────────────
-# StateStore — 核心持久化层
+# StateStore — Core persistence layer
 # ───────────────────────────────────────────────────────────────
 
 class StateStore:
-    """SQLite 状态持久化存储
+    """SQLite state persistence store
 
-    职责：
-      1. 创建 / 维护所有核心表（projects, features, checkpoints, traces, audit_logs, model_health）
-      2. 提供 CRUD 接口
-      3. checkpoint 写入 / 恢复 / 回滚
-      4. 向后兼容 F005 的 project_state 表
+    Responsibilities:
+      1. Create / maintain all core tables (projects, features, checkpoints, traces, audit_logs, model_health)
+      2. Provide CRUD interfaces
+      3. Checkpoint write / restore / rollback
+      4. Backward compatible with F005 project_state table
+      5. Schema migration from v1 to v2
     """
 
     def __init__(self, db_path: Path) -> None:
-        # 兼容 F005: 如果传入的是目录，自动拼接 DB 文件名
+        # Compatible with F005: if a directory is passed, auto-append DB filename
         if db_path.is_dir():
             db_path = db_path / "pipeline_state.db"
         self.db_path = db_path
-        # 确保父目录存在
+        # Ensure parent directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_tables()
+        self._migrate_v1_to_v2()
 
-    # ── 内部工具 ──
+    # ── Internal helpers ──
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
@@ -213,6 +273,45 @@ class StateStore:
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _migrate_v1_to_v2(self) -> None:
+        """Migrate schema from v1 to v2 if needed."""
+        with self._conn() as conn:
+            # Check if features table has the v2 columns
+            cursor = conn.execute("PRAGMA table_info(features)")
+            columns = {row["name"] for row in cursor.fetchall()}
+
+            if "wave" not in columns:
+                conn.execute("ALTER TABLE features ADD COLUMN wave INTEGER DEFAULT 0")
+            if "dependencies_json" not in columns:
+                conn.execute("ALTER TABLE features ADD COLUMN dependencies_json TEXT DEFAULT '[]'")
+            if "acceptance_criteria_json" not in columns:
+                conn.execute("ALTER TABLE features ADD COLUMN acceptance_criteria_json TEXT DEFAULT '[]'")
+            if "github_issue_number" not in columns:
+                conn.execute("ALTER TABLE features ADD COLUMN github_issue_number INTEGER")
+            if "sync_status" not in columns:
+                conn.execute("ALTER TABLE features ADD COLUMN sync_status TEXT DEFAULT 'unsynced'")
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS features_sync_status_check_insert
+                    BEFORE INSERT ON features
+                    BEGIN
+                        SELECT CASE
+                            WHEN NEW.sync_status NOT IN ('unsynced','syncing','synced','failed')
+                            THEN RAISE(ABORT, 'Invalid sync_status')
+                        END;
+                    END;
+                """)
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS features_sync_status_check_update
+                    BEFORE UPDATE ON features
+                    BEGIN
+                        SELECT CASE
+                            WHEN NEW.sync_status NOT IN ('unsynced','syncing','synced','failed')
+                            THEN RAISE(ABORT, 'Invalid sync_status')
+                        END;
+                    END;
+                """)
+            conn.commit()
 
     # ── projects ──
 
@@ -268,8 +367,9 @@ class StateStore:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO features
-                (id, project_id, title, description, status, owner_agent, token_cost, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (id, project_id, title, description, status, owner_agent, token_cost,
+                 wave, dependencies_json, acceptance_criteria_json, github_issue_number, sync_status, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     feature.id,
@@ -279,6 +379,11 @@ class StateStore:
                     feature.status,
                     feature.owner_agent,
                     feature.token_cost,
+                    feature.wave,
+                    json.dumps(feature.dependencies, ensure_ascii=False),
+                    json.dumps(feature.acceptance_criteria, ensure_ascii=False),
+                    feature.github_issue_number,
+                    feature.sync_status,
                     self._now(),
                 ),
             )
@@ -291,37 +396,14 @@ class StateStore:
             ).fetchone()
         if row is None:
             return None
-        return FeatureRecord(
-            id=row["id"],
-            project_id=row["project_id"],
-            title=row["title"],
-            description=row["description"] or "",
-            status=row["status"],
-            owner_agent=row["owner_agent"] or "",
-            token_cost=row["token_cost"] or 0,
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
+        return self._row_to_feature(row)
 
     def list_features(self, project_id: str) -> List[FeatureRecord]:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM features WHERE project_id = ?", (project_id,)
             ).fetchall()
-        return [
-            FeatureRecord(
-                id=r["id"],
-                project_id=r["project_id"],
-                title=r["title"],
-                description=r["description"] or "",
-                status=r["status"],
-                owner_agent=r["owner_agent"] or "",
-                token_cost=r["token_cost"] or 0,
-                created_at=r["created_at"],
-                updated_at=r["updated_at"],
-            )
-            for r in rows
-        ]
+        return [self._row_to_feature(r) for r in rows]
 
     def update_feature_status(self, feature_id: str, status: str) -> None:
         with self._conn() as conn:
@@ -335,6 +417,50 @@ class StateStore:
             )
             conn.commit()
 
+    def update_feature_sync(self, feature_id: str, sync_status: str, github_issue_number: Optional[int] = None) -> None:
+        """Update feature sync status and optional GitHub issue number."""
+        with self._conn() as conn:
+            if github_issue_number is not None:
+                conn.execute(
+                    """
+                    UPDATE features
+                    SET sync_status = ?, github_issue_number = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (sync_status, github_issue_number, self._now(), feature_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE features
+                    SET sync_status = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (sync_status, self._now(), feature_id),
+                )
+            conn.commit()
+
+    def _row_to_feature(self, row: sqlite3.Row) -> FeatureRecord:
+        """Convert a DB row to FeatureRecord, handling v2 fields."""
+        deps = row["dependencies_json"] if "dependencies_json" in row.keys() else None
+        ac = row["acceptance_criteria_json"] if "acceptance_criteria_json" in row.keys() else None
+        return FeatureRecord(
+            id=row["id"],
+            project_id=row["project_id"],
+            title=row["title"],
+            description=row["description"] or "",
+            status=row["status"],
+            owner_agent=row["owner_agent"] if "owner_agent" in row.keys() else "",
+            token_cost=row["token_cost"] if "token_cost" in row.keys() else 0,
+            wave=row["wave"] if "wave" in row.keys() else 0,
+            dependencies=json.loads(deps) if deps else [],
+            acceptance_criteria=json.loads(ac) if ac else [],
+            github_issue_number=row["github_issue_number"] if "github_issue_number" in row.keys() else None,
+            sync_status=row["sync_status"] if "sync_status" in row.keys() else "unsynced",
+            created_at=row["created_at"] if "created_at" in row.keys() else None,
+            updated_at=row["updated_at"] if "updated_at" in row.keys() else None,
+        )
+
     # ── checkpoints ──
 
     def write_checkpoint(
@@ -347,7 +473,7 @@ class StateStore:
         action: Optional[str] = None,
         result: Optional[str] = None,
     ) -> int:
-        """写入 checkpoint，返回 checkpoint id"""
+        """Write a checkpoint and return the checkpoint id."""
         state_json = json.dumps(state_dict, ensure_ascii=False)
         with self._conn() as conn:
             cur = conn.execute(
@@ -432,14 +558,14 @@ class StateStore:
         )
 
     def restore_checkpoint(self, checkpoint_id: int) -> Optional[Dict[str, Any]]:
-        """恢复指定 checkpoint 的状态字典"""
+        """Restore state dict from a specific checkpoint."""
         cp = self.get_checkpoint(checkpoint_id)
         if cp is None:
             return None
         return json.loads(cp.state_json)
 
     def rollback(self, project_id: str, checkpoint_id: int) -> Optional[Dict[str, Any]]:
-        """回滚到指定 checkpoint，并更新项目 phase"""
+        """Rollback to a specific checkpoint and update project phase."""
         state = self.restore_checkpoint(checkpoint_id)
         if state is None:
             return None
@@ -542,6 +668,83 @@ class StateStore:
             for r in rows
         ]
 
+    # ── dispatch_history ──
+
+    def write_dispatch_history(
+        self,
+        task_id: Optional[str] = None,
+        agent: Optional[str] = None,
+        task_type: Optional[str] = None,
+        success: bool = False,
+        latency_ms: int = 0,
+        exec_mode: str = "async",
+        output: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> int:
+        """写入一次 dispatch 历史记录，同步路径应标注 exec_mode='sync'。"""
+        with self._conn() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO dispatch_history
+                (task_id, agent, task_type, success, latency_ms, exec_mode, output, error, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    agent,
+                    task_type,
+                    success,
+                    latency_ms,
+                    exec_mode,
+                    output,
+                    error,
+                    self._now(),
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid or 0
+
+    def list_dispatch_history(
+        self, agent: Optional[str] = None, task_type: Optional[str] = None, limit: int = 100
+    ) -> List[DispatchHistoryRecord]:
+        """查询 dispatch 历史，可按 agent / task_type 过滤。"""
+        query = "SELECT * FROM dispatch_history"
+        params: List[Any] = []
+        conditions: List[str] = []
+        if agent is not None:
+            conditions.append("agent = ?")
+            params.append(agent)
+        if task_type is not None:
+            conditions.append("task_type = ?")
+            params.append(task_type)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._conn() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [
+            DispatchHistoryRecord(
+                id=r["id"],
+                task_id=r["task_id"],
+                agent=r["agent"],
+                task_type=r["task_type"],
+                success=bool(r["success"]),
+                latency_ms=r["latency_ms"],
+                exec_mode=r["exec_mode"],
+                output=r["output"],
+                error=r["error"],
+                created_at=r["created_at"],
+            )
+            for r in rows
+        ]
+
+    def count_dispatch_history(self) -> int:
+        """返回 dispatch_history 总记录数。"""
+        with self._conn() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM dispatch_history").fetchone()
+        return row[0] if row else 0
+
     # ── model_health ──
 
     def write_model_health(
@@ -563,10 +766,135 @@ class StateStore:
             conn.commit()
             return cur.lastrowid or 0
 
-    # ── 向后兼容 F005 ──
+    # ── approval_records ──
+
+    def save_approval_record(
+        self,
+        record_id: str,
+        project_id: str,
+        operation: str,
+        level: str,
+        risk: str = "low",
+        cost: float = 0.0,
+        alternatives: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        status: str = "pending",
+        summary: str = "",
+        created_at: float = 0.0,
+        resolved_at: Optional[float] = None,
+        checkpoint_id: Optional[int] = None,
+    ) -> None:
+        """Save or update an approval record in the database."""
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO approval_records
+                (id, project_id, operation, level, risk, cost, alternatives_json,
+                 metadata_json, status, summary, created_at, resolved_at, checkpoint_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record_id,
+                    project_id,
+                    operation,
+                    level,
+                    risk,
+                    cost,
+                    json.dumps(alternatives or [], ensure_ascii=False),
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                    status,
+                    summary,
+                    created_at,
+                    resolved_at,
+                    checkpoint_id,
+                ),
+            )
+            conn.commit()
+
+    def get_approval_record(self, record_id: str) -> Optional[Dict[str, Any]]:
+        """Load a single approval record from the database."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM approval_records WHERE id = ?", (record_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "operation": row["operation"],
+            "level": row["level"],
+            "risk": row["risk"],
+            "cost": row["cost"],
+            "alternatives": json.loads(row["alternatives_json"]),
+            "metadata": json.loads(row["metadata_json"]),
+            "status": row["status"],
+            "summary": row["summary"],
+            "created_at": row["created_at"],
+            "resolved_at": row["resolved_at"],
+            "checkpoint_id": row["checkpoint_id"],
+        }
+
+    def list_approval_records(self, project_id: str) -> List[Dict[str, Any]]:
+        """List all approval records for a given project."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM approval_records WHERE project_id = ? ORDER BY db_created_at DESC",
+                (project_id,),
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "project_id": r["project_id"],
+                "operation": r["operation"],
+                "level": r["level"],
+                "risk": r["risk"],
+                "cost": r["cost"],
+                "alternatives": json.loads(r["alternatives_json"]),
+                "metadata": json.loads(r["metadata_json"]),
+                "status": r["status"],
+                "summary": r["summary"],
+                "created_at": r["created_at"],
+                "resolved_at": r["resolved_at"],
+                "checkpoint_id": r["checkpoint_id"],
+            }
+            for r in rows
+        ]
+
+    def update_approval_status(
+        self,
+        record_id: str,
+        status: str,
+        resolved_at: Optional[float] = None,
+        checkpoint_id: Optional[int] = None,
+    ) -> None:
+        """Update the status of an approval record."""
+        with self._conn() as conn:
+            if resolved_at is not None and checkpoint_id is not None:
+                conn.execute(
+                    """UPDATE approval_records
+                       SET status = ?, resolved_at = ?, checkpoint_id = ?
+                       WHERE id = ?""",
+                    (status, resolved_at, checkpoint_id, record_id),
+                )
+            elif resolved_at is not None:
+                conn.execute(
+                    """UPDATE approval_records
+                       SET status = ?, resolved_at = ?
+                       WHERE id = ?""",
+                    (status, resolved_at, record_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE approval_records SET status = ? WHERE id = ?",
+                    (status, record_id),
+                )
+            conn.commit()
+
+    # ── Backward compatibility with F005 ──
 
     def legacy_save(self, key: str, value: str) -> None:
-        """兼容 F005 的 key-value 存储"""
+        """Compatible with F005 key-value store."""
         with self._conn() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO project_state (key, value) VALUES (?, ?)",
@@ -575,7 +903,7 @@ class StateStore:
             conn.commit()
 
     def legacy_load(self, key: str) -> Optional[str]:
-        """兼容 F005 的 key-value 读取"""
+        """Compatible with F005 key-value read."""
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT value FROM project_state WHERE key = ?", (key,)
@@ -584,31 +912,35 @@ class StateStore:
             return None
         return row["value"]
 
-    # 兼容旧 F005 测试直接调用的 save / load 接口
-    def save(self, state: ProjectState) -> None:
-        """向后兼容：保存 ProjectState 到 legacy 表"""
-        from pipeline import ProjectState as _ProjectState
+    # Compatible with old F005 tests that directly call save / load interfaces
+    def save(self, state: "ProjectState") -> None:  # type: ignore # noqa: F821
+        """Backward compatible: save ProjectState to legacy table."""
+        from models import ProjectState as _ProjectState
         self.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
 
-    def load(self, name: str) -> Optional[ProjectState]:
-        """向后兼容：从 legacy 表加载 ProjectState"""
-        from pipeline import ProjectState as _ProjectState
+    def load(self, name: str) -> Optional["ProjectState"]:  # type: ignore # noqa: F821
+        """Backward compatible: load ProjectState from legacy table."""
+        from models import ProjectState as _ProjectState
         raw = self.legacy_load("state")
         if raw is None:
             return None
         return _ProjectState.from_dict(json.loads(raw))
 
-    # ── schema 版本控制 ──
+    # ── Schema version control ──
 
     def get_schema_version(self) -> int:
-        """返回当前数据库 schema 版本"""
+        """Return current database schema version."""
         try:
             with self._conn() as conn:
                 row = conn.execute(
                     "SELECT schema_version FROM projects LIMIT 1"
                 ).fetchone()
             if row is None:
-                return 0
+                # No project rows yet; infer from features table columns
+                with self._conn() as conn:
+                    cur = conn.execute("PRAGMA table_info(features)")
+                    columns = {r["name"] for r in cur.fetchall()}
+                return 2 if "wave" in columns else 1
             return row["schema_version"]
         except sqlite3.OperationalError:
             return 0

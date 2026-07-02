@@ -289,6 +289,42 @@ def accept_project(test_project: tuple[str, Path]) -> tuple[str, Path]:
     conn.commit()
     conn.close()
 
+
+    # 确保 git 主分支存在（需要至少一个 commit）
+    import subprocess
+    git_dir = proj_dir / ".git"
+    if git_dir.exists():
+        subprocess.run(
+            ["git", "-C", str(proj_dir), "add", "-A"],
+            capture_output=True, timeout=10,
+        )
+        subprocess.run(
+            ["git", "-C", str(proj_dir), "commit", "-m", "init commit"],
+            capture_output=True, timeout=10,
+        )
+        subprocess.run(
+            ["git", "-C", str(proj_dir), "branch", "-M", "main"],
+            capture_output=True, timeout=10,
+        )
+
+    # 创建 E2E 测试脚本（输出 JSON 评分，grade 不为 D/F）
+    e2e_dir = proj_dir / "tests" / "e2e"
+    e2e_dir.mkdir(parents=True, exist_ok=True)
+    (e2e_dir / "test_e2e_accept.py").write_text(
+        'import json\nprint(json.dumps({"grade": "B", "total": 8}))\n',
+        encoding="utf-8",
+    )
+
+    # 创建 E2E 基准库文件
+    benchmark_dir = Path.home() / ".hermes"
+    benchmark_dir.mkdir(parents=True, exist_ok=True)
+    benchmark_path = benchmark_dir / "e2e-benchmark.json"
+    benchmark_path.write_text(
+        json.dumps({"project_averages": {project_name: {"avg_total": 7.0}}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
     return project_name, base_dir
 
 
@@ -358,7 +394,7 @@ def test_suggestion_engine_get_next_phase_with_state(init_project: tuple[str, Pa
     project_name, base_dir = init_project
     engine = SuggestionEngine(project_name, base_dir)
     next_phase = engine.get_next_phase({"phase": "develop"})
-    assert next_phase == "test"
+    assert next_phase == "integrate"
 
 
 # ───────────────────────────────────────────────────────────────
@@ -487,35 +523,35 @@ def test_suggest_next_phase_advance_design(design_project: tuple[str, Path]) -> 
 
 
 def test_suggest_next_phase_advance_decompose(decompose_project: tuple[str, Path]) -> None:
-    """decompose 阶段检查通过，应生成 advance 建议"""
+    """v3.0: decompose → research"""
     project_name, base_dir = decompose_project
     engine = SuggestionEngine(project_name, base_dir)
     suggestion = engine.suggest_next_phase()
     assert suggestion.type == SuggestionType.ADVANCE
     assert suggestion.current_phase == "decompose"
-    assert suggestion.next_phase == "develop"
+    assert suggestion.next_phase == "research"
     assert suggestion.can_advance is True
 
 
 def test_suggest_next_phase_advance_develop(develop_project: tuple[str, Path]) -> None:
-    """develop 阶段检查通过，应生成 advance 建议"""
+    """v3.0: develop → integrate"""
     project_name, base_dir = develop_project
     engine = SuggestionEngine(project_name, base_dir)
     suggestion = engine.suggest_next_phase()
     assert suggestion.type == SuggestionType.ADVANCE
     assert suggestion.current_phase == "develop"
-    assert suggestion.next_phase == "test"
+    assert suggestion.next_phase == "integrate"
     assert suggestion.can_advance is True
 
 
 def test_suggest_next_phase_advance_test(test_project: tuple[str, Path]) -> None:
-    """test 阶段检查通过，应生成 advance 建议"""
+    """v3.0: test → evaluate"""
     project_name, base_dir = test_project
     engine = SuggestionEngine(project_name, base_dir)
     suggestion = engine.suggest_next_phase()
     assert suggestion.type == SuggestionType.ADVANCE
     assert suggestion.current_phase == "test"
-    assert suggestion.next_phase == "accept"
+    assert suggestion.next_phase == "evaluate"
     assert suggestion.can_advance is True
 
 

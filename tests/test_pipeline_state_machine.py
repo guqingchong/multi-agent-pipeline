@@ -162,7 +162,7 @@ def test_check_init_fail_missing_files() -> None:
     )
     passed, msg = check_init(state)
     assert passed is False
-    assert "缺少元数据文件" in msg
+    assert "Missing metadata files" in msg
 
 
 def test_check_init_fail_no_git() -> None:
@@ -176,7 +176,7 @@ def test_check_init_fail_no_git() -> None:
     )
     passed, msg = check_init(state)
     assert passed is False
-    assert "git repo 未初始化" in msg
+    assert "Git repo not initialized" in msg
 
 
 def test_check_develop_pass() -> None:

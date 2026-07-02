@@ -1,0 +1,49 @@
+# Multi-Agent Pipeline Auto-Trigger Rules
+# This file defines when Hermes should automatically invoke bridge_cli.py
+
+# Trigger 1: Project-related keywords at conversation start
+triggers:
+  - pattern: "(?i)(开发|项目|pipeline|feature|phase|deploy|test|review|code|审核|测试|部署|推进|advance|check|suggest|route)"
+    action: "bridge_cli.py full <project_name>"
+    condition: "conversation_start or project_context_missing"
+
+  - pattern: "(?i)(派给|委派|delegate|assign|交给|让.*做|谁.*做)"
+    action: "bridge_cli.py route <task_type> [feature_id]"
+    condition: "before_delegate_task"
+
+  - pattern: "(?i)(完成|done|finished|passed|通过了|做好了)"
+    action: "bridge_cli.py suggest <project_name>"
+    condition: "after_feature_completion"
+
+  - pattern: "(?i)(现在.*做|下一步|该.*了|继续|推进|advance)"
+    action: "bridge_cli.py suggest <project_name>"
+    condition: "user_asks_next_step"
+
+  - pattern: "(?i)(超时|timeout|没响应|卡住|失败|fallback)"
+    action: "enable FileBasedChannel or MCPChannel"
+    condition: "delegate_task_timeout"
+
+  - pattern: "(?i)(审批|approve|rollback|回退|phase.*推进)"
+    action: "bridge_cli.py approve <project_name> --phase <design|accept>"
+    condition: "approval_required"
+
+# Environment setup
+environment:
+  MULTI_AGENT_PIPELINE_BASE_DIR: "C:\\tmp"
+  PIPELINE__DB_NAME: "pipeline_state.db"
+
+# Project detection
+project_detection:
+  base_dir: "C:\\tmp"
+  indicators:
+    - "features.json"
+    - "pipeline_state.db"
+    - "SOUL.md"
+    - "AGENTS.md"
+
+# Auto-execution rules
+auto_execute:
+  - rule: "If user mentions a project name and it exists in C:/tmp/, auto-run 'bridge_cli.py load'"
+  - rule: "If check-hermes returns false, auto-delegate to target_agent without asking user"
+  - rule: "If suggest returns 'advance' and no blockers, auto-propose to user"
+  - rule: "If delegate_task timeout, auto-switch to FileBasedChannel and retry"

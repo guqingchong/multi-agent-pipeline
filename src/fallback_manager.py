@@ -66,7 +66,7 @@ class FallbackConfig:
     auto_recover: bool = True                    # 是否自动检测恢复
     recover_check_interval: int = 30             # 恢复检测间隔（秒）
     max_fallback_attempts: int = 3               # 最大降级尝试次数
-    fallback_timeout_multiplier: float = 1.5     # 降级时超时倍数
+    fallback_timeout_multiplier: float = 1.5     # 降级时Timeout倍数
 
 
 # ───────────────────────────────────────────────────────────────
@@ -168,7 +168,7 @@ class FallbackManager:
                     "fallback_count": self._fallback_count,
                 })
                 return adapter
-            except Exception:
+            except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError):
                 continue
 
         # 所有降级都失败
@@ -247,7 +247,7 @@ class FallbackManager:
                 if self.resilience is not None:
                     self.resilience.get_breaker(name).record_failure()
                 continue
-            except Exception as e:
+            except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
                 last_error = e
                 if self.resilience is not None:
                     self.resilience.get_breaker(name).record_failure()

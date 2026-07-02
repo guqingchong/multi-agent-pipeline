@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from config_loader import ConfigLoader, DEFAULT_CONFIG
+from src.prompt_cache import ConfigLoader, DEFAULT_CONFIG
 
 
 # ───────────────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ from config_loader import ConfigLoader, DEFAULT_CONFIG
 
 def test_module_importable() -> None:
     """[command] config_loader 模块可导入"""
-    from config_loader import ConfigLoader, DEFAULT_CONFIG
+    from src.prompt_cache import ConfigLoader, DEFAULT_CONFIG
     assert ConfigLoader is not None
     assert DEFAULT_CONFIG is not None
 

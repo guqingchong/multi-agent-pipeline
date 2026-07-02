@@ -1,5 +1,7 @@
 # verify-runtime.ps1 — 环境验证脚本
 # 检查 Python、依赖、项目模块、Git 是否全部就绪
+#
+# 自动生成于: delivery.py (W5-Q06)
 
 param(
     [switch]$Verbose
@@ -54,7 +56,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
 Write-Host "========================================" -ForegroundColor $Cyan
-Write-Host "  Multi-Agent Pipeline 环境验证" -ForegroundColor $Cyan
+Write-Host "  multi-agent-pipeline 环境验证" -ForegroundColor $Cyan
 Write-Host "========================================" -ForegroundColor $Cyan
 Write-Host "项目目录: $ScriptDir" -ForegroundColor $Cyan
 Write-Host ""
@@ -95,11 +97,11 @@ Write-Host "`n[2/5] 第三方依赖检查" -ForegroundColor $Cyan
 
 $ThirdPartyPackages = @(
     @{ Name = "PyYAML"; Import = "yaml" },
-    @{ Name = "pytest"; Import = "pytest" },
-    @{ Name = "pytest-cov"; Import = "pytest_cov" },
-    @{ Name = "pytest-asyncio"; Import = "pytest_asyncio" },
-    @{ Name = "rich"; Import = "rich" },
-    @{ Name = "playwright"; Import = "playwright" }
+@{ Name = "pytest"; Import = "pytest" },
+@{ Name = "pytest-cov"; Import = "pytest_cov" },
+@{ Name = "pytest-asyncio"; Import = "pytest_asyncio" },
+@{ Name = "rich"; Import = "rich" },
+@{ Name = "playwright"; Import = "playwright" }
 )
 
 foreach ($Pkg in $ThirdPartyPackages) {
@@ -122,36 +124,190 @@ Write-Host "`n[3/5] 项目模块导入检查" -ForegroundColor $Cyan
 
 $SrcPath = Join-Path $ScriptDir "src"
 $ProjectModules = @(
-    "pipeline",
-    "phase_checks",
-    "phase_flow",
-    "state_store",
-    "adapters",
-    "sandbox",
-    "circuit_breaker",
-    "approval",
-    "observability",
-    "context_manager",
-    "prompt_cache",
-    "prompt_cache_store",
-    "worktree",
-    "config_loader",
-    "performance_optimizer",
-    "fallback_manager",
-    "e2e_framework"
+"pipeline", "phase_checks", "phase_flow", "state_store", "adapters", "sandbox", "circuit_breaker", "approval", "observability", "context_manager", "prompt_cache", "prompt_cache_store", "worktree", "config_loader", "performance_optimizer", "fallback_manager", "e2e_framework", "delivery"
 )
 
 foreach ($Mod in $ProjectModules) {
     try {
-        $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import $Mod; print('OK')" 2>&1
-        if ($Output -match "OK") {
-            Write-Check "src.$Mod" $true
-        } else {
-            Write-Check "src.$Mod" $false "导入输出异常: $Output"
-        }
-    } catch {
-        Write-Check "src.$Mod" $false "导入失败: $_"
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import pipeline; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.pipeline" $true
+    } else {
+        Write-Check "src.pipeline" $false "导入输出异常: $Output"
     }
+} catch {
+    Write-Check "src.pipeline" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import phase_checks; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.phase_checks" $true
+    } else {
+        Write-Check "src.phase_checks" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.phase_checks" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import phase_flow; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.phase_flow" $true
+    } else {
+        Write-Check "src.phase_flow" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.phase_flow" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import state_store; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.state_store" $true
+    } else {
+        Write-Check "src.state_store" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.state_store" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import adapters; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.adapters" $true
+    } else {
+        Write-Check "src.adapters" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.adapters" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import sandbox; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.sandbox" $true
+    } else {
+        Write-Check "src.sandbox" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.sandbox" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import circuit_breaker; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.circuit_breaker" $true
+    } else {
+        Write-Check "src.circuit_breaker" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.circuit_breaker" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import approval; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.approval" $true
+    } else {
+        Write-Check "src.approval" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.approval" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import observability; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.observability" $true
+    } else {
+        Write-Check "src.observability" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.observability" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import context_manager; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.context_manager" $true
+    } else {
+        Write-Check "src.context_manager" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.context_manager" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import prompt_cache; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.prompt_cache" $true
+    } else {
+        Write-Check "src.prompt_cache" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.prompt_cache" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import prompt_cache_store; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.prompt_cache_store" $true
+    } else {
+        Write-Check "src.prompt_cache_store" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.prompt_cache_store" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import worktree; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.worktree" $true
+    } else {
+        Write-Check "src.worktree" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.worktree" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import config_loader; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.config_loader" $true
+    } else {
+        Write-Check "src.config_loader" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.config_loader" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import performance_optimizer; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.performance_optimizer" $true
+    } else {
+        Write-Check "src.performance_optimizer" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.performance_optimizer" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import fallback_manager; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.fallback_manager" $true
+    } else {
+        Write-Check "src.fallback_manager" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.fallback_manager" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import e2e_framework; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.e2e_framework" $true
+    } else {
+        Write-Check "src.e2e_framework" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.e2e_framework" $false "导入失败: $_"
+}
+try {
+    $Output = python -c "import sys; sys.path.insert(0, '$SrcPath'); import delivery; print('OK')" 2>&1
+    if ($Output -match "OK") {
+        Write-Check "src.delivery" $true
+    } else {
+        Write-Check "src.delivery" $false "导入输出异常: $Output"
+    }
+} catch {
+    Write-Check "src.delivery" $false "导入失败: $_"
+}
 }
 
 # ───────────────────────────────────────────────

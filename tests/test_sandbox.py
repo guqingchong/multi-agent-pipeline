@@ -76,7 +76,7 @@ class TestProfileSwitching:
 
     def test_available_profiles(self):
         sb = Sandbox()
-        assert set(sb.get_available_profiles()) == {"lockdown", "pipeline", "assistant", "research", "free"}
+        assert set(sb.get_available_profiles()) == {"lockdown", "pipeline", "assistant", "research", "free", "e2e"}
 
     def test_cli_mode_switch(self):
         sb = Sandbox()

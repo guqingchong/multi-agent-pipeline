@@ -7,7 +7,7 @@
   3. 识别用户意图（identify_intent）
 
 集成组件：
-  - state_store.py  (SQLite 状态持久化)
+  - state_store.py  (SQLite State persistence)
   - pipeline.py     (Phase 状态机)
   - observability.py (仪表盘数据)
 """
@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.state_store import StateStore, ProjectRecord, FeatureRecord
-from src.pipeline import ProjectState, Phase
+from src.models import ProjectState, Phase
+try:
+    from config import get_config
+except (ModuleNotFoundError, ImportError):
+    from src.config import get_config
 from src.observability import (
     ObservabilityStore,
     Dashboard,
@@ -39,7 +43,7 @@ from src.observability import (
 # 常量 / 配置
 # ───────────────────────────────────────────────────────────────
 
-DB_FILENAME = "pipeline_state.db"
+DB_FILENAME = get_config().db_name
 
 # 用户意图类型
 class UserIntent(Enum):

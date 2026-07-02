@@ -1,0 +1,10 @@
+# requirements.txt — multi-agent-pipeline 项目依赖
+#
+# 自动生成于: delivery.py (W5-Q06)
+
+pyyaml>=6.0
+pytest>=7.0
+pytest-cov
+pytest-asyncio
+rich>=13.0
+playwright>=1.40.0

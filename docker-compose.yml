@@ -1,0 +1,72 @@
+# docker-compose.yml — Docker Compose 部署配置
+# 用于在容器环境中部署 multi-agent-pipeline 系统
+#
+# 自动生成于: delivery.py (W5-Q06)
+
+version: '3.8'
+
+services:
+  # 主应用服务
+  multi-agent-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: multi-agent-pipeline
+    ports:
+      - "8000:8000"  # 根据实际端口调整
+    volumes:
+      - ./:/app  # 挂载项目目录
+      - /app/src/__pycache__  # 排除缓存目录
+    environment:
+      - PYTHONPATH=/app/src
+      - ENV=production
+    networks:
+      - pipeline-network
+    restart: unless-stopped
+    command: >
+      bash -c "
+        echo '安装依赖...' &&
+        python -m pip install -r requirements.txt &&
+        echo '启动 multi-agent-pipeline...' &&
+        python src/pipeline.py --help
+      "
+
+  # 数据库服务（如果需要）
+  database:
+    image: sqlite:latest  # 或者使用 postgres:13 等
+    container_name: pipeline-db
+    environment:
+      POSTGRES_DB: pipeline_db
+      POSTGRES_USER: pipeline_user
+      POSTGRES_PASSWORD: pipeline_password
+    volumes:
+      - pipeline-db-data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - pipeline-network
+    restart: unless-stopped
+
+  # Redis 缓存服务（如果需要）
+  redis:
+    image: redis:7-alpine
+    container_name: pipeline-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - pipeline-redis-data:/data
+    networks:
+      - pipeline-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+# 定义网络
+networks:
+  pipeline-network:
+    driver: bridge
+
+# 定义卷
+volumes:
+  pipeline-db-data:
+  pipeline-redis-data:
