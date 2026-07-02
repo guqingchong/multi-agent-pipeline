@@ -492,3 +492,152 @@ class TestImports:
         assert AgentResult is not None
         assert OutputParser is not None
         assert ToleranceLayer is not None
+
+
+# ───────────────────────────────────────────────────────────────
+# AgentAdapter 统一适配器测试（Task 7）
+# ───────────────────────────────────────────────────────────────
+
+class TestAgentAdapter:
+    def test_adapter_importable(self) -> None:
+        from adapters import AgentAdapter
+        assert AgentAdapter is not None
+
+    def test_version_in_mock_mode(self) -> None:
+        from adapters import AgentAdapter
+        adapter = AgentAdapter(
+            name="test-agent",
+            cli_path="/nonexistent/cli",
+            cli_command="{prompt}",
+            env_vars={},
+        )
+        ok, msg = adapter.version()
+        assert ok is True
+        assert "MOCK" in msg
+        assert "test-agent" in msg
+
+    def test_health_in_mock_mode(self) -> None:
+        from adapters import AgentAdapter
+        adapter = AgentAdapter(
+            name="test-agent",
+            cli_path="/nonexistent/cli",
+            cli_command="{prompt}",
+            env_vars={},
+        )
+        health = adapter.health()
+        assert health["ok"] is True
+        assert "MOCK" in health["version"]
+        assert health["cli_path"] == "/nonexistent/cli"
+
+    def test_run_uses_mock_output_and_parses(self) -> None:
+        from adapters import AgentAdapter, AdapterStatus
+        adapter = AgentAdapter(
+            name="test-agent",
+            cli_path="/nonexistent/cli",
+            cli_command="{prompt}",
+            env_vars={},
+        )
+        result = adapter.run("code", {"prompt": "hello"}, work_dir=".")
+        assert result.success is True
+        assert result.status == AdapterStatus.SUCCESS
+        assert "MOCK" in result.output
+        assert result.structured is not None
+        assert result.exit_code == 0
+
+    def test_run_failure_path_with_nonzero_exit(self) -> None:
+        from adapters import AgentAdapter, AdapterStatus
+        adapter = AgentAdapter(
+            name="test-agent",
+            cli_path="/nonexistent/cli",
+            cli_command="{prompt}",
+            env_vars={},
+        )
+        result = adapter._parse_and_validate(
+            raw_stdout="",
+            raw_stderr="something went wrong",
+            exit_code=1,
+        )
+        assert result.success is False
+        assert result.status == AdapterStatus.FAILED
+        assert result.exit_code == 1
+        assert "something went wrong" in result.error_message
+
+    def test_run_truncated_output(self) -> None:
+        from adapters import AgentAdapter, AdapterStatus
+        adapter = AgentAdapter(
+            name="test-agent",
+            cli_path="/nonexistent/cli",
+            cli_command="{prompt}",
+            env_vars={},
+        )
+        truncated_stdout = "incomplete output [truncated]"
+        result = adapter._parse_and_validate(
+            raw_stdout=truncated_stdout,
+            raw_stderr="",
+            exit_code=0,
+        )
+        assert result.success is False
+        assert result.status == AdapterStatus.FAILED
+        assert "truncated" in result.error_message.lower()
+
+    def test_build_command_with_prompt_placeholder(self) -> None:
+        from adapters import AgentAdapter
+        adapter = AgentAdapter(
+            name="test-agent",
+            cli_path="/bin/agent",
+            cli_command="exec --auto {prompt}",
+            env_vars={},
+        )
+        cmd = adapter._build_command("code", {"prompt": "do work"})
+        assert cmd == ["/bin/agent", "exec", "--auto", "do work"]
+
+    def test_build_command_without_prompt_placeholder(self) -> None:
+        from adapters import AgentAdapter
+        adapter = AgentAdapter(
+            name="test-agent",
+            cli_path="/bin/agent",
+            cli_command="run",
+            env_vars={},
+        )
+        cmd = adapter._build_command("code", {"prompt": "do work"})
+        assert cmd == ["/bin/agent", "run"]
+
+    def test_parser_extract_runs_in_mock_path(self) -> None:
+        from adapters import AgentAdapter
+        adapter = AgentAdapter(
+            name="test-agent",
+            cli_path="/nonexistent/cli",
+            cli_command="{prompt}",
+            env_vars={},
+        )
+        parsed = adapter._parser.extract(
+            "Tests: 5 passed, 0 failed\n4200 tokens",
+            "",
+        )
+        assert parsed["test_stats"] == {"passed": 5, "failed": 0, "skipped": 0, "errors": 0}
+        assert parsed["tokens"] == 4200
+
+    def test_tolerance_handle_failure(self) -> None:
+        from adapters import AgentAdapter, AdapterStatus
+        adapter = AgentAdapter(
+            name="test-agent",
+            cli_path="/nonexistent/cli",
+            cli_command="{prompt}",
+            env_vars={},
+        )
+        result = adapter._tolerance.handle_failure("stderr msg", 42)
+        assert result.success is False
+        assert result.status == AdapterStatus.FAILED
+        assert result.exit_code == 42
+        assert "stderr msg" in result.error_message
+
+    def test_tolerance_is_truncated(self) -> None:
+        from adapters import AgentAdapter
+        adapter = AgentAdapter(
+            name="test-agent",
+            cli_path="/nonexistent/cli",
+            cli_command="{prompt}",
+            env_vars={},
+        )
+        assert adapter._tolerance.is_truncated("abc [truncated]") is True
+        assert adapter._tolerance.is_truncated("complete output") is False

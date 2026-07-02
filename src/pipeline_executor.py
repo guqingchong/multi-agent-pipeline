@@ -67,9 +67,9 @@ except (ModuleNotFoundError, ImportError):
         FallbackManager = None
 
 try:
-    from adapters import AgentResult, AdapterStatus
+    from adapters import AgentResult, AdapterStatus, AgentAdapter
 except (ModuleNotFoundError, ImportError):
-    from src.adapters import AgentResult, AdapterStatus
+    from src.adapters import AgentResult, AdapterStatus, AgentAdapter
 
 # P3: dispatch_history persistence
 try:
@@ -141,7 +141,7 @@ def _load_key_from_file(source: str) -> Dict[str, str]:
         if source == "qwen":
             path = Path(os.path.expanduser("~/.qwen/settings.json"))
             if path.exists():
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
                 env_data = data.get("env", {})
                 return {k: v for k, v in env_data.items() if "KEY" in k.upper() or "URL" in k.upper()}
         elif source == "openai":
@@ -409,80 +409,69 @@ class PipelineExecutor:
         payload: Optional[Dict[str, Any]],
         timeout_sec: float,
     ) -> MCPResult:
-        """同步执行 CLI（不经过 daemon）"""
+        """同步执行 CLI（不经过 daemon），通过 AgentAdapter 统一调用。"""
         ep = self._cli_endpoints.get(adapter_name)
         if ep is None:
             return MCPResult(
-                task_id=task_id, agent_id=adapter_name,
-                success=False, error=f"No CLI endpoint for {adapter_name}",
+                task_id=task_id,
+                agent_id=adapter_name,
+                success=False,
+                error=f"No CLI endpoint for {adapter_name}",
                 status=MCPStatus.FAILED,
             )
 
-        payload = payload or {}
-        prompt = payload.get("prompt", "")
-        # Build args list safely (no shell=True, no shell injection)
-        # CLI command template like "exec --auto {prompt}" or 'prompt "{prompt}"'
-        args = [ep.cli_path]
-        if "{prompt}" in ep.cli_command:
-            prefix, suffix = ep.cli_command.split("{prompt}", 1)
-            if prefix.strip():
-                args.extend(prefix.strip().split())
-            args.append(prompt)
-            if suffix.strip():
-                args.extend(suffix.strip().split())
-        else:
-            args.extend(ep.cli_command.split())
+        adapter = AgentAdapter(
+            name=adapter_name,
+            cli_path=ep.cli_path,
+            cli_command=ep.cli_command,
+            env_vars=ep.env,
+        )
 
         start = time.time()
         try:
-            env = os.environ.copy()
-            env.update(ep.env)
-
-            proc = subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                timeout=timeout_sec,
-                cwd=self.work_dir,
-                env=env,
+            agent_result = adapter.run(
+                task_type,
+                payload or {},
+                work_dir=self.work_dir,
+                timeout=int(timeout_sec or 600),
             )
-            latency_ms = int((time.time() - start) * 1000)
-            raw = proc.stdout or proc.stderr or ""
-            # Strip ANSI escape sequences + CodeWhale TUI prefix "N;emoji "
-            import re
-            output = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw)     # CSI: \x1b[...
-            output = re.sub(r'\x1b\][^\x07]*\x07', '', output)     # OSC: \x1b]...\x07
-            output = re.sub(r'^\d+;\S[^\n]{0,20}\n?', '', output, flags=re.MULTILINE)  # TUI prefix per-line
-            output = output.strip()
+            latency_ms = agent_result.latency_ms or int((time.time() - start) * 1000)
+
+            # 将 AgentResult.output 统一为字符串（兼容解析层返回 dict 的情况）
+            raw_output = agent_result.output
+            if isinstance(raw_output, dict):
+                output_text = json.dumps(raw_output, ensure_ascii=False)
+            else:
+                output_text = str(raw_output)
 
             result = MCPResult(
                 task_id=task_id,
                 agent_id=adapter_name,
-                success=proc.returncode == 0,
-                output=output[:5000],
+                success=agent_result.success,
+                output=output_text[:5000],
                 latency_ms=latency_ms,
-                status=MCPStatus.COMPLETED if proc.returncode == 0 else MCPStatus.FAILED,
-                error="" if proc.returncode == 0 else f"Exit code {proc.returncode}",
+                status=MCPStatus.COMPLETED if agent_result.success else MCPStatus.FAILED,
+                error=agent_result.error_message or "",
             )
-        except subprocess.TimeoutExpired:
+        except Exception as e:
             result = MCPResult(
-                task_id=task_id, agent_id=adapter_name,
-                success=False, error=f"Timeout after {timeout_sec}s",
-                status=MCPStatus.TIMEOUT,
-            )
-        except (subprocess.SubprocessError, OSError) as e:
-            result = MCPResult(
-                task_id=task_id, agent_id=adapter_name,
-                success=False, error=str(e),
+                task_id=task_id,
+                agent_id=adapter_name,
+                success=False,
+                error=str(e),
                 status=MCPStatus.FAILED,
             )
 
-        self.transport.complete(task_id, AgentResult(
-            success=result.success,
-            output=result.output,
-            error_message=result.error,
-            latency_ms=result.latency_ms,
-        ), agent_id=adapter_name)
+        self.transport.complete(
+            task_id,
+            AgentResult(
+                success=result.success,
+                output=result.output,
+                error_message=result.error,
+                latency_ms=result.latency_ms,
+            ),
+            agent_id=adapter_name,
+        )
 
         # P3: 同步路径也写入 dispatch_history，标注 exec_mode='sync'
         try:

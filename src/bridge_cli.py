@@ -93,65 +93,70 @@ def _get_db_path(project_name: str) -> Path:
 # ─── Health Check Functions ──────────────────────────────────
 
 def check_endpoint_availability(adapter_name: str) -> Dict[str, Any]:
-    """Check adapter availability using REGISTRY metadata."""
-    result = {
-        "adapter": adapter_name,
-        "cli_exists": False,
-        "version_works": False,
-        "api_key_valid": False,
-        "issues": [],
-        "suggestions": []
-    }
+    """Check adapter availability using AgentAdapter.version()."""
+    try:
+        from adapters import AgentAdapter
+    except (ModuleNotFoundError, ImportError):
+        from src.adapters import AgentAdapter
 
     try:
         from registry import REGISTRY
     except (ModuleNotFoundError, ImportError):
         from src.registry import REGISTRY
 
-    agent_def = REGISTRY.agents.get(adapter_name)
-    if agent_def is None:
-        result["issues"].append(f"Agent '{adapter_name}' not found in REGISTRY")
-        result["suggestions"].append(f"Available agents: {list(REGISTRY.agents.keys())}")
-        return result
+    agent_def = REGISTRY.get_agent(adapter_name)
+    if not agent_def:
+        return {
+            "ok": False,
+            "error": f"Unknown agent {adapter_name}",
+            "adapter": adapter_name,
+            "cli_exists": False,
+            "version_works": False,
+            "api_key_valid": False,
+            "cli_path": "",
+            "version": "",
+            "issues": [f"Agent '{adapter_name}' not found in REGISTRY"],
+            "suggestions": [f"Available agents: {list(REGISTRY.agents.keys())}"],
+        }
 
-    cli_path = agent_def.cli_path
-    cli_exists = os.path.exists(cli_path) if cli_path else False
-    if cli_exists:
-        result["cli_exists"] = True
-    else:
-        result["issues"].append(f"CLI not found at {cli_path}")
-        result["suggestions"].append(f"Install {adapter_name} or update REGISTRY cli_path")
+    adapter = AgentAdapter(
+        name=agent_def.name,
+        cli_path=agent_def.cli_path,
+        cli_command=agent_def.cli_command,
+        env_vars=agent_def.env_vars,
+    )
+    ok, msg = adapter.version()
 
-    if cli_exists:
-        try:
-            version_result = subprocess.run(
-                [cli_path, "--version"],
-                capture_output=True, text=True, timeout=10
-            )
-            if version_result.returncode == 0:
-                result["version_works"] = True
-            else:
-                result["issues"].append(f"--version failed: {version_result.stderr[:100]}")
-                result["suggestions"].append(f"Check {adapter_name} installation")
-        except subprocess.TimeoutExpired:
-            result["issues"].append("--version timed out")
-        except Exception as e:
-            result["issues"].append(f"--version error: {str(e)[:80]}")
-
+    # Preserve legacy api_key/env checks for cmd_dispatch compatibility
+    api_key_valid = True
+    missing_keys: List[str] = []
     if agent_def.env_vars:
-        missing_keys = []
         for var_name in agent_def.env_vars:
-            if os.environ.get(var_name):
-                result["api_key_valid"] = True
-            else:
+            if not os.environ.get(var_name):
                 missing_keys.append(var_name)
         if missing_keys:
-            result["issues"].append(f"Missing env vars: {missing_keys}")
-            result["suggestions"].append(f"Set {missing_keys} environment variables")
-    else:
-        result["api_key_valid"] = True
+            api_key_valid = False
 
-    return result
+    issues: List[str] = []
+    suggestions: List[str] = []
+    if not ok:
+        issues.append(f"CLI not found at {agent_def.cli_path} or --version failed: {msg}")
+        suggestions.append(f"Install {adapter_name} or update REGISTRY cli_path")
+    if missing_keys:
+        issues.append(f"Missing env vars: {missing_keys}")
+        suggestions.append(f"Set {missing_keys} environment variables")
+
+    return {
+        "ok": ok and api_key_valid,
+        "version": msg,
+        "cli_path": agent_def.cli_path,
+        "adapter": adapter_name,
+        "cli_exists": ok,
+        "version_works": ok,
+        "api_key_valid": api_key_valid,
+        "issues": issues,
+        "suggestions": suggestions,
+    }
 
 
 # ─── Shared pipeline commands (called directly, not via pipeline.py) ─

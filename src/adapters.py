@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import re
 import os
+import subprocess
 import time
 import traceback
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 
 try:
@@ -369,6 +371,13 @@ class OutputParser:
             "commit_hash": cls.extract_git_commit_hash(text),
         }
 
+    def extract(self, raw_stdout: str, raw_stderr: str) -> Dict[str, Any]:
+        """统一提取接口：合并 stdout / stderr 后做启发式提取。"""
+        text = raw_stdout
+        if raw_stderr:
+            text += "\n" + raw_stderr
+        return self.heuristic_summary(text)
+
 
 # ───────────────────────────────────────────────────────────────
 # 容错层：异常恢复策略
@@ -626,6 +635,24 @@ class ToleranceLayer:
             return False
         return OutputParser.detect_truncation(text)
 
+    def is_truncated(self, text: str) -> bool:
+        """统一截断检测接口（供 AgentAdapter 使用）。"""
+        return self.detect_truncation(text)
+
+    def handle_failure(self, raw_stderr: str, exit_code: int) -> AgentResult:
+        """统一失败处理接口（供 AgentAdapter 使用）。"""
+        message = f"Agent failed with exit code {exit_code}"
+        if raw_stderr:
+            message += f": {raw_stderr.strip()[:200]}"
+        return AgentResult(
+            success=False,
+            output=raw_stderr,
+            error_message=message,
+            status=AdapterStatus.FAILED,
+            exit_code=exit_code,
+            raw_output=raw_stderr,
+        )
+
     def shorten_context(self, text: str) -> str:
         """缩短上下文（保留前半部分，但极短文本不截断）"""
         if not text or len(text) <= 10:
@@ -743,6 +770,138 @@ class AgentAdapterBase(ABC):
 
     def __init__(self) -> None:
         pass
+
+
+# ───────────────────────────────────────────────────────────────
+# 统一 Agent 适配器（Task 7）
+# ───────────────────────────────────────────────────────────────
+
+
+@dataclass
+class AgentAdapter:
+    """统一 Agent 适配器：CLI 调用 → 解析 → 容错。
+
+    mock 仅短路 subprocess 调用；解析层与容错层始终运行。
+    """
+
+    name: str
+    cli_path: str
+    cli_command: str
+    env_vars: Dict[str, str]
+    _parser: OutputParser = field(init=False, default_factory=OutputParser)
+    _tolerance: ToleranceLayer = field(init=False, default_factory=ToleranceLayer)
+
+    def version(self, timeout: int = 10) -> Tuple[bool, str]:
+        """返回 (ok, version_string)。AGENT_MOCK=true 时直接返回 mock 版本。"""
+        if os.environ.get("AGENT_MOCK", "false").lower() == "true":
+            return True, f"[MOCK] {self.name} version"
+        if not Path(self.cli_path).exists():
+            return False, f"CLI not found: {self.cli_path}"
+        try:
+            result = subprocess.run(
+                [self.cli_path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env={**os.environ, **self.env_vars},
+            )
+            return result.returncode == 0, (result.stdout + result.stderr).strip()[:200]
+        except Exception as e:
+            return False, str(e)[:200]
+
+    def health(self, timeout: int = 10) -> Dict[str, Any]:
+        """Health check：复用 version()，返回结构化结果。"""
+        ok, msg = self.version(timeout=timeout)
+        return {
+            "ok": ok,
+            "version": msg,
+            "cli_path": self.cli_path,
+        }
+
+    def run(self, task_type: str, payload: dict, work_dir: str, timeout: int = 600) -> AgentResult:
+        """Agent 执行入口：CLI 调用 → 解析 → 容错。mock 仅短路 subprocess 调用。"""
+        start = time.time()
+        raw_stdout, raw_stderr, exit_code = self._execute_cli(
+            task_type, payload, work_dir, timeout
+        )
+        result = self._parse_and_validate(raw_stdout, raw_stderr, exit_code)
+        result.latency_ms = int((time.time() - start) * 1000)
+        return result
+
+    def _execute_cli(
+        self, task_type: str, payload: dict, work_dir: str, timeout: int
+    ) -> Tuple[str, str, int]:
+        """执行 CLI 进程。mock 模式下返回模拟原始输出，不触发真实 Agent 调用。"""
+        if os.environ.get("AGENT_MOCK", "false").lower() == "true":
+            return self._mock_raw_output(task_type, payload), "", 0
+
+        cmd = self._build_command(task_type, payload)
+        result = subprocess.run(
+            cmd,
+            cwd=work_dir,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env={**os.environ, **self.env_vars},
+        )
+        return result.stdout, result.stderr, result.returncode
+
+    def _build_command(self, task_type: str, payload: dict) -> List[str]:
+        """根据 cli_command 模板与 payload 构建命令列表。"""
+        prompt = payload.get("prompt", "")
+        if "{prompt}" in self.cli_command:
+            prefix, suffix = self.cli_command.split("{prompt}", 1)
+            args = [self.cli_path]
+            if prefix.strip():
+                args.extend(prefix.strip().split())
+            args.append(prompt)
+            if suffix.strip():
+                args.extend(suffix.strip().split())
+            return args
+        return [self.cli_path] + self.cli_command.split()
+
+    def _mock_raw_output(self, task_type: str, payload: dict) -> str:
+        """返回模拟的原始 CLI 输出字符串（不含任何解析），保持与真实输出格式相似。"""
+        return (
+            f"[MOCK] {self.name} simulated output for task_type={task_type}\n"
+            "Task completed successfully.\n"
+            "Generated code/files as requested."
+        )
+
+    def _parse_and_validate(
+        self, raw_stdout: str, raw_stderr: str, exit_code: int
+    ) -> AgentResult:
+        """解析层 + 容错层：从原始输出提取结构化结果，并处理失败/截断/超时痕迹。"""
+        # 1. 解析（正则 + 启发式规则）—— 始终运行
+        parsed = self._parser.extract(raw_stdout, raw_stderr)
+
+        # 2. 容错（非零退出码 / stderr 异常 / 截断检测）—— 始终运行
+        if exit_code != 0:
+            return self._tolerance.handle_failure(raw_stderr, exit_code)
+        if self._tolerance.is_truncated(raw_stdout):
+            return AgentResult(
+                success=False,
+                error_message="Output appears truncated",
+                output=raw_stdout,
+                structured=parsed,
+                status=AdapterStatus.FAILED,
+                exit_code=exit_code,
+                raw_output=raw_stdout,
+            )
+
+        return AgentResult(
+            success=True,
+            output=raw_stdout,
+            structured=parsed,
+            status=AdapterStatus.SUCCESS,
+            exit_code=exit_code,
+            raw_output=raw_stdout,
+        )
+
+
+# ───────────────────────────────────────────────────────────────
+# 适配层基类
+# ───────────────────────────────────────────────────────────────
 
 
 class BaseAdapter(AgentAdapterBase):
