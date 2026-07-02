@@ -13,13 +13,32 @@ from typing import Dict, List, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# 导入REGISTRY
-try:
-    from registry import REGISTRY
-except (ModuleNotFoundError, ImportError):
-    from src.registry import REGISTRY
 
+def _default_available_modes() -> dict:
+    """Build AVAILABLE_MODES lazily so config.py can be imported before registry.py."""
+    try:
+        from registry import REGISTRY
+    except (ModuleNotFoundError, ImportError):
+        from src.registry import REGISTRY
 
+    return {
+        "greenfield": {
+            "label": "新建项目",
+            "phases": [phase for phase in REGISTRY.list_phases()
+                      if phase in ["init", "prd", "research", "design", "decompose",
+                                   "journey", "develop", "integrate", "test", "evaluate", "accept", "deploy"]],
+            "trigger": "default",
+            "description": "从零开始，先设计再开发",
+        },
+        "brownfield": {
+            "label": "存量优化",
+            "phases": [phase for phase in REGISTRY.list_phases()
+                      if phase in ["discover", "benchmark", "analyze", "plan",
+                                   "execute", "verify", "deliver"]],
+            "trigger": "auto",  # features.json存在且passed>0时自动检测
+            "description": "先摸底再对标再优化",
+        },
+    }
 class PipelineConfig(BaseSettings):
     """Pipeline configuration loaded from environment or .env file.
 
@@ -51,24 +70,7 @@ class PipelineConfig(BaseSettings):
     # brownfield 用于存量项目优化提升
     # 从REGISTRY获取所有可用的phases
     AVAILABLE_MODES: dict = Field(
-        default_factory=lambda: {
-            "greenfield": {
-                "label": "新建项目",
-                "phases": [phase for phase in REGISTRY.list_phases()
-                          if phase in ["init", "prd", "research", "design", "decompose",
-                                       "journey", "develop", "integrate", "test", "evaluate", "accept", "deploy"]],
-                "trigger": "default",
-                "description": "从零开始，先设计再开发",
-            },
-            "brownfield": {
-                "label": "存量优化",
-                "phases": [phase for phase in REGISTRY.list_phases()
-                          if phase in ["discover", "benchmark", "analyze", "plan",
-                                       "execute", "verify", "deliver"]],
-                "trigger": "auto",  # features.json存在且passed>0时自动检测
-                "description": "先摸底再对标再优化",
-            },
-        },
+        default_factory=_default_available_modes,
         description="可用模式及对应Phase链。插件化：新增模式只需在此字典加一条。",
     )
     pipeline_mode: str = Field(
@@ -89,13 +91,21 @@ class PipelineConfig(BaseSettings):
 
     @property
     def phase_order(self) -> List[str]:
-        """返回当前模式的Phase链。PhaseFlow只读此属性，模式透明。"""
+        """返回当前模式的Phase链。PhaseFlow只读此属性，模式透明。
+
+        权威顺序来自配置字段 ``greenfield_phase_order`` / ``brownfield_phase_order``；
+        ``AVAILABLE_MODES`` 仅用于校验模式名及允许出现的 phase 集合。
+        """
         mode = self.pipeline_mode
-        if mode in self.AVAILABLE_MODES:
-            return self.AVAILABLE_MODES[mode]["phases"]
-        # fallback: 兼容旧的 phase_order 配置
-        return ["init", "design", "decompose", "research", "prd", "journey",
-                "develop", "integrate", "test", "evaluate", "accept", "deploy"]
+        if mode not in self.AVAILABLE_MODES:
+            # fallback: 兼容旧的 phase_order 配置
+            return ["init", "design", "decompose", "research", "prd", "journey",
+                    "develop", "integrate", "test", "evaluate", "accept", "deploy"]
+        if mode == "greenfield":
+            return list(self.greenfield_phase_order)
+        if mode == "brownfield":
+            return list(self.brownfield_phase_order)
+        return []
 
     @staticmethod
     def detect_mode(project_dir: str | Path) -> str:

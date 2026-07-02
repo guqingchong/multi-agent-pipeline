@@ -25,13 +25,13 @@ try:
     from models import (
         PipelineError, PhaseBlockedError, ProjectNotFoundError,
         CheckpointNotFoundError, ApprovalRequiredError,
-        Phase, ProjectState, PHASE_NAMES,
+        Phase, ProjectState, phase_names,
     )
 except ModuleNotFoundError:
     from src.models import (
         PipelineError, PhaseBlockedError, ProjectNotFoundError,
         CheckpointNotFoundError, ApprovalRequiredError,
-        Phase, ProjectState, PHASE_NAMES,
+        Phase, ProjectState, phase_names,
     )
 
 try:
@@ -582,7 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
     # rollback-phase (F013)
     p_rollback_phase = sub.add_parser("rollback-phase", help="Rollback to a specific phase (requires approval)")
     p_rollback_phase.add_argument("project", help="Project name")
-    p_rollback_phase.add_argument("--to", required=True, choices=PHASE_NAMES, help="Target phase")
+    p_rollback_phase.add_argument("--to", required=True, choices=phase_names(), help="Target phase")
     p_rollback_phase.add_argument("--approved", action="store_true", help="Confirm manual approval")
 
     # approve (F013)

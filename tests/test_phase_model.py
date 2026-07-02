@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
-from phase_model import Phase, get_phase_order, PHASE_NAMES
+from phase_model import Phase, get_phase_order, phase_names
 
 
 class TestPhaseCreation:
@@ -27,6 +27,9 @@ class TestPhaseCreation:
     def test_from_name_classmethod(self):
         p = Phase.from_name("develop")
         assert p == Phase("develop")
+
+    def test_repr(self):
+        assert repr(Phase("init")) == "Phase('init')"
 
 
 class TestPhaseComparison:
@@ -61,7 +64,7 @@ class TestPhaseOrder:
             get_phase_order("unknown")
 
     def test_phase_names_matches_greenfield(self):
-        assert PHASE_NAMES == get_phase_order("greenfield")
+        assert phase_names() == get_phase_order("greenfield")
 
 
 class TestPhaseNavigation:

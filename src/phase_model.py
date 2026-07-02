@@ -30,9 +30,9 @@ def get_phase_order(mode: str = "greenfield") -> List[str]:
     raise ValueError(f"Unknown pipeline mode: {mode!r}")
 
 
-# Ordered list of all registered phase names.  Order is derived from the
-# greenfield pipeline mode so that legacy consumers get a stable sequence.
-PHASE_NAMES: List[str] = get_phase_order("greenfield")
+def phase_names() -> List[str]:
+    """Return the current ordered list of greenfield phase names."""
+    return get_phase_order("greenfield")
 
 
 class Phase:
@@ -48,6 +48,9 @@ class Phase:
 
     def __str__(self) -> str:
         return self.name
+
+    def __repr__(self) -> str:
+        return f"Phase({self.name!r})"
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Phase) and self.name == other.name

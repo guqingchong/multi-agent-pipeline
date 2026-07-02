@@ -15,13 +15,13 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 try:
-    from phase_model import PHASE_NAMES, Phase
+    from phase_model import phase_names, Phase
 except ImportError:
-    from src.phase_model import PHASE_NAMES, Phase
+    from src.phase_model import phase_names, Phase
 
 
 __all__ = [
-    "PHASE_NAMES",
+    "phase_names",
     "Phase",
     "ProjectState",
     "PipelineError",

@@ -397,21 +397,28 @@ def test_phase_flow_check_fail(tmp_cwd: Path) -> None:
 # 2. advance 测试
 # ───────────────────────────────────────────────────────────────
 
-def test_phase_flow_advance_init_to_design(init_project: tuple[str, Path]) -> None:
+def test_phase_flow_advance_init_to_prd(init_project: tuple[str, Path]) -> None:
+    """v3.0: init → prd（12 Phase 顺序）"""
     project_name, base_dir = init_project
+    proj_dir = base_dir / project_name
+
+    # PRD phase requires a PRD document
+    (proj_dir / "docs").mkdir(exist_ok=True)
+    (proj_dir / "docs" / "PRD.md").write_text("# PRD\n", encoding="utf-8")
+
     flow = PhaseFlow(project_name, base_dir)
     passed, msg = flow.advance()
     assert passed is True
     assert "init" in msg
-    assert "design" in msg
-    assert flow.current_phase() == "design"
+    assert "prd" in msg
+    assert flow.current_phase() == "prd"
 
 
-def test_phase_flow_advance_blocked_at_design(init_project: tuple[str, Path]) -> None:
-    """design phase 没有 architecture.md 和 design_approved，应该被 BLOCK"""
+def test_phase_flow_advance_blocked_at_prd(init_project: tuple[str, Path]) -> None:
+    """prd phase 没有 PRD 文档，应该被 BLOCK"""
     project_name, base_dir = init_project
     flow = PhaseFlow(project_name, base_dir)
-    # 先推进到 design
+    # 先推进到 prd
     flow.advance()
     # 再次 advance 应该被 block
     passed, msg = flow.advance()
@@ -429,15 +436,21 @@ def test_phase_flow_advance_design_to_decompose(design_project: tuple[str, Path]
     assert flow.current_phase() == "decompose"
 
 
-def test_phase_flow_advance_decompose_to_research(decompose_project: tuple[str, Path]) -> None:
-    """v3.0: decompose → research（12 Phase 顺序）"""
+def test_phase_flow_advance_decompose_to_journey(decompose_project: tuple[str, Path]) -> None:
+    """v3.0: decompose → journey（12 Phase 顺序）"""
     project_name, base_dir = decompose_project
+    proj_dir = base_dir / project_name
+
+    # journey phase requires a journey document
+    (proj_dir / "docs").mkdir(exist_ok=True)
+    (proj_dir / "docs" / "journey.md").write_text("# Journey\n", encoding="utf-8")
+
     flow = PhaseFlow(project_name, base_dir)
     passed, msg = flow.advance()
     assert passed is True
     assert "decompose" in msg
-    assert "research" in msg
-    assert flow.current_phase() == "research"
+    assert "journey" in msg
+    assert flow.current_phase() == "journey"
 
 
 def test_phase_flow_advance_develop_to_integrate(develop_project: tuple[str, Path]) -> None:
@@ -572,11 +585,18 @@ def test_phase_check_function(init_project: tuple[str, Path]) -> None:
 
 
 def test_phase_advance_function(init_project: tuple[str, Path]) -> None:
+    """v3.0: init → prd（12 Phase 顺序）"""
     project_name, base_dir = init_project
+    proj_dir = base_dir / project_name
+
+    # PRD phase requires a PRD document
+    (proj_dir / "docs").mkdir(exist_ok=True)
+    (proj_dir / "docs" / "PRD.md").write_text("# PRD\n", encoding="utf-8")
+
     passed, msg = phase_advance(project_name, base_dir)
     assert passed is True
     assert "init" in msg
-    assert "design" in msg
+    assert "prd" in msg
 
 
 def test_phase_rollback_function(design_project: tuple[str, Path]) -> None:

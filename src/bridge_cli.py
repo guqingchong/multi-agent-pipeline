@@ -68,7 +68,7 @@ try:
         cmd_rollback_phase as pipeline_cmd_rollback_phase,
         cmd_approve as pipeline_cmd_approve,
         cmd_mark_tests as pipeline_cmd_mark_tests,
-        PHASE_NAMES,
+        phase_names,
     )
 except ImportError as e:
     print(json.dumps({"error": f"Pipeline import failed: {e}", "hint": "Check pipeline module"}))
@@ -588,7 +588,7 @@ def build_parser() -> argparse.ArgumentParser:
     rollback_phase_parser = subparsers.add_parser("rollback-phase", help="Rollback to a specific phase (requires approval)")
     rollback_phase_parser.add_argument("project_pos", nargs="?", help="Project name (positional, for backward compatibility)")
     rollback_phase_parser.add_argument("--project", help="Project name")
-    rollback_phase_parser.add_argument("--to", required=True, choices=PHASE_NAMES, help="Target phase")
+    rollback_phase_parser.add_argument("--to", required=True, choices=phase_names(), help="Target phase")
     rollback_phase_parser.add_argument("--approved", action="store_true", help="Confirm manual approval")
 
     # approve command (from pipeline)

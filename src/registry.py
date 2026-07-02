@@ -156,11 +156,23 @@ REGISTRY = Registry()
 
 
 def _resolve_cli_path(agent_name: str, fallback: str) -> str:
-    """Resolve agent CLI path: env > registry fallback > PATH."""
+    """Resolve agent CLI path: env > config.agent_cli_paths > registry fallback > PATH."""
     env_key = f"AGENT_CLI_PATH_{agent_name.upper().replace('-', '_')}"
     env_path = os.environ.get(env_key)
     if env_path and Path(env_path).exists():
         return str(Path(env_path).resolve())
+
+    # Consult configurable agent CLI paths only after the registry has finished
+    # loading, to avoid a circular import when config.py imports registry.py.
+    if REGISTRY.is_ready():
+        try:
+            from config import get_config
+        except ImportError:
+            from src.config import get_config
+        config_path = get_config().agent_cli_paths.get(agent_name)
+        if config_path and Path(config_path).exists():
+            return str(Path(config_path).resolve())
+
     if fallback and Path(fallback).exists():
         return str(Path(fallback).resolve())
     which = shutil.which(agent_name)
