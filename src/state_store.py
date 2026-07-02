@@ -287,12 +287,6 @@ class StateStore:
 
     def _ensure_tables(self) -> None:
         with self._conn() as conn:
-            # Schema fix: dispatch_history gained a project_id column to support
-            # the required index. Add it to existing tables before creating indexes.
-            cur = conn.execute("PRAGMA table_info(dispatch_history)")
-            rows = cur.fetchall()
-            if rows and "project_id" not in {r["name"] for r in rows}:
-                conn.execute("ALTER TABLE dispatch_history ADD COLUMN project_id TEXT")
             conn.executescript(CORE_TABLES_SQL)
             conn.executescript(LEGACY_TABLE_SQL)
             conn.commit()

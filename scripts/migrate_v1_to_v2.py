@@ -35,13 +35,40 @@ def migrate(db_path: Path) -> None:
 
     conn = sqlite3.connect(str(db_path))
     try:
-        cursor = conn.execute("PRAGMA table_info(features)")
-        columns = {row[1] for row in cursor.fetchall()}
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='features'"
+        )
+        features_table_exists = cursor.fetchone() is not None
 
-        for col_name, col_def in V2_FEATURES_COLUMNS.items():
-            if col_name not in columns:
-                conn.execute(f"ALTER TABLE features ADD COLUMN {col_name} {col_def}")
-                print(f"Added features.{col_name}")
+        if features_table_exists:
+            cursor = conn.execute("PRAGMA table_info(features)")
+            columns = {row[1] for row in cursor.fetchall()}
+
+            for col_name, col_def in V2_FEATURES_COLUMNS.items():
+                if col_name not in columns:
+                    conn.execute(f"ALTER TABLE features ADD COLUMN {col_name} {col_def}")
+                    print(f"Added features.{col_name}")
+        else:
+            # No legacy features table: create it directly as v2.
+            conn.execute("""
+                CREATE TABLE features (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT REFERENCES projects(id),
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    status TEXT CHECK(status IN ('pending','in_progress','review','test','passed','failed','needs_rework')),
+                    owner_agent TEXT,
+                    token_cost INTEGER DEFAULT 0,
+                    wave INTEGER DEFAULT 0,
+                    dependencies_json TEXT DEFAULT '[]',
+                    acceptance_criteria_json TEXT DEFAULT '[]',
+                    github_issue_number INTEGER,
+                    sync_status TEXT CHECK(sync_status IN ('unsynced','syncing','synced','failed')) DEFAULT 'unsynced',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            print("Created features table with v2 schema")
 
         # Add CHECK triggers for sync_status now that the column is guaranteed to exist.
         conn.execute("""

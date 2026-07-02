@@ -233,7 +233,8 @@ def check_design(project_name: str, base_dir: Path) -> CheckResult:
             design_doc_path = file_path
 
     if design_doc_path is not None and design_doc_path.exists():
-        content = design_doc_path.read_text(encoding="utf-8", errors="ignore")
+        rel_path_str = str(design_doc_path.relative_to(proj_dir)).replace("\\", "/")
+        content = _read_text_file(project_name, base_dir, rel_path_str) or ""
         details["design_doc_length"] = len(content)
         # 检查是否包含模块划分、接口定义、数据流
         has_modules = "模块" in content or "module" in content.lower() or "划分" in content
@@ -551,6 +552,26 @@ def check_test(project_name: str, base_dir: Path) -> CheckResult:
     details["tests_passed_flag"] = tests_passed
     required_pass_rate = _check_threshold("test.required_pass_rate", 0.9)
     details["required_pass_rate"] = required_pass_rate
+
+    # 从 features.json 计算 feature 通过率并强制阈值
+    total_features = 0
+    passed_features = 0
+    if features_data and isinstance(features_data, dict):
+        features = features_data.get("features", [])
+        if isinstance(features, list):
+            total_features = len(features)
+            passed_features = sum(
+                1 for f in features if isinstance(f, dict) and f.get("status") == "passed"
+            )
+    pass_rate = passed_features / total_features if total_features > 0 else 0.0
+    details["total_features"] = total_features
+    details["passed_features"] = passed_features
+    details["pass_rate"] = pass_rate
+    if pass_rate < required_pass_rate:
+        errors.append(
+            f"feature 通过率 {pass_rate:.2%} 低于阈值 {required_pass_rate:.0%}"
+        )
+
     if not tests_passed:
         errors.append("tests_passed 标记为 false")
 
@@ -1176,7 +1197,7 @@ def check_evaluate(project_name, base_dir):
         if (eval_result.total_score / 10.0) < min_score:
             errors.append(f"LLM judge 评分 {eval_result.total_score:.2f}/10 低于阈值 {min_score * 10:.1f}/10")
         if eval_result.verdict.value in ("BLOCK", "P0"):
-            errors.append(f"LLM judge  verdict 为 {eval_result.verdict.value}")
+            errors.append(f"LLM judge verdict 为 {eval_result.verdict.value}")
     except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as e:
         details["evaluate"] = {"ran": False, "error": str(e)[:100]}
     # Inspector review
