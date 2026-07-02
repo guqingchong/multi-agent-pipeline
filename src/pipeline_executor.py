@@ -453,6 +453,22 @@ class PipelineExecutor:
                 status=MCPStatus.COMPLETED if agent_result.success else MCPStatus.FAILED,
                 error=agent_result.error_message or "",
             )
+        except subprocess.TimeoutExpired:
+            result = MCPResult(
+                task_id=task_id,
+                agent_id=adapter_name,
+                success=False,
+                error=f"Timeout after {timeout_sec}s",
+                status=MCPStatus.TIMEOUT,
+            )
+        except (subprocess.SubprocessError, OSError) as e:
+            result = MCPResult(
+                task_id=task_id,
+                agent_id=adapter_name,
+                success=False,
+                error=str(e),
+                status=MCPStatus.FAILED,
+            )
         except Exception as e:
             result = MCPResult(
                 task_id=task_id,

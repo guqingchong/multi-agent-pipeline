@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from pipeline_executor import PipelineExecutor, create_executor
+from pipeline_executor import PipelineExecutor, create_executor, MCPStatus
 
 
 class TestAgentAdapterIntegration:
@@ -106,3 +108,67 @@ class TestAgentAdapterIntegration:
         status = executor.status()
         assert "cli_endpoints" in status
         assert set(status["cli_endpoints"]) >= {"claude-code", "codewhale", "qwen-code"}
+
+    def test_dispatch_and_wait_reports_timeout(self, tmp_path, monkeypatch) -> None:
+        """When subprocess.run raises TimeoutExpired, status must be MCPStatus.TIMEOUT."""
+        os.environ["AGENT_MOCK"] = "false"
+        import adapters
+
+        def raise_timeout(*args, **kwargs):
+            timeout = kwargs.get("timeout", 1)
+            raise subprocess.TimeoutExpired("mock-cmd", timeout)
+
+        monkeypatch.setattr(adapters.subprocess, "run", raise_timeout)
+
+        executor = PipelineExecutor(
+            db_path=str(tmp_path / "pipeline.db"),
+            work_dir=str(tmp_path),
+            enable_heartbeat=False,
+            enable_streaming=False,
+            enable_stdio=False,
+        )
+        executor.register_all_defaults()
+
+        result = executor.dispatch_and_wait(
+            "codewhale",
+            "review",
+            {"prompt": "review this code"},
+            timeout_sec=1,
+        )
+
+        assert result.success is False
+        assert result.status == MCPStatus.TIMEOUT
+        assert "Timeout" in result.error
+
+    def test_mock_mode_does_not_call_subprocess_run(self, tmp_path, monkeypatch) -> None:
+        """When AGENT_MOCK=true, AgentAdapter must never invoke subprocess.run."""
+        os.environ["AGENT_MOCK"] = "true"
+        import adapters
+
+        called = []
+
+        def fake_run(*args, **kwargs):
+            called.append((args, kwargs))
+            raise AssertionError("subprocess.run should not be called in mock mode")
+
+        monkeypatch.setattr(adapters.subprocess, "run", fake_run)
+
+        executor = PipelineExecutor(
+            db_path=str(tmp_path / "pipeline.db"),
+            work_dir=str(tmp_path),
+            enable_heartbeat=False,
+            enable_streaming=False,
+            enable_stdio=False,
+        )
+        executor.register_all_defaults()
+
+        result = executor.dispatch_and_wait(
+            "codewhale",
+            "review",
+            {"prompt": "review this code"},
+            timeout_sec=60,
+        )
+
+        assert result.success is True
+        assert result.status == MCPStatus.COMPLETED
+        assert called == []
