@@ -45,7 +45,7 @@
         "物理删除 src/message_queue.py 与 src/task_queue.py",
         "pytest tests/test_queue.py -v 全部 PASS"
       ],
-      "status": "pending"
+      "status": "PASS"
     },
     {
       "id": "R3",
