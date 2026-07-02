@@ -85,8 +85,8 @@ class TestPhaseNavigation:
         assert Phase("init").prev() is None
 
     def test_next_for_unordered_phase_returns_none(self):
-        # "review" is registered but not part of the greenfield order.
-        assert Phase("review").next() is None
+        # "discover" is registered but not part of the greenfield order.
+        assert Phase("discover").next() is None
 
 
 class TestPhaseQueries:

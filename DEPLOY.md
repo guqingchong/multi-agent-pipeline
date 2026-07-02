@@ -43,6 +43,12 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+开发或运行质量门禁时，额外安装开发依赖：
+
+```powershell
+python -m pip install -r requirements-dev.txt
+```
+
 ### 4. 配置环境变量
 
 ```powershell
@@ -162,7 +168,8 @@ C:\path\to\multi-agent-pipeline\
 ├── README.md                     ← 使用说明
 ├── DEPLOY.md                     ← 本文档
 ├── AGENTS.md                     ← Agent 配置说明
-└── requirements.txt              ← Python 依赖
+├── requirements.txt              ← Python 依赖
+├── requirements-dev.txt          ← 开发/CI 依赖（ruff、mypy、pytest）
 ```
 
 ---

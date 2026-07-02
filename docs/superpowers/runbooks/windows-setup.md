@@ -73,6 +73,7 @@ python -m venv .venv
 . .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
 ---
@@ -101,7 +102,7 @@ $env:AGENT_MOCK = "true"
 . .\scripts\start-windows.ps1
 ```
 
-看到 `Registry ready: phases: 20 agents: 3` 类似的输出，即表示启动成功。
+看到 `Registry ready: phases: 19 agents: 3` 类似的输出，即表示启动成功。
 
 ---
 

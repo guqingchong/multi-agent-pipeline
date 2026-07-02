@@ -98,7 +98,7 @@ class TestPhaseAdvanceSimulation:
     """Simulate user advancing through phases."""
 
     def test_full_legacy_flow(self, tmp_project_dir: Path) -> None:
-        """Simulate init -> develop -> review -> test flow (legacy state machine)."""
+        """Simulate init -> develop -> prd -> test flow (legacy state machine)."""
         db_path = tmp_project_dir / "pipeline_state.db"
         store = StateStore(db_path)
         store.create_project("test_proj", "Test Project", "init")
@@ -115,10 +115,10 @@ class TestPhaseAdvanceSimulation:
         store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
         store.update_project_phase("test_proj", "develop")
 
-        # Advance to review
-        state.phase = Phase("review")
+        # Advance to prd
+        state.phase = Phase("prd")
         store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
-        store.update_project_phase("test_proj", "review")
+        store.update_project_phase("test_proj", "prd")
 
         # Advance to test
         state.phase = Phase("test")

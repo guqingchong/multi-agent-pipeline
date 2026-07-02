@@ -333,12 +333,12 @@ def test_get_latest_checkpoint(store: StateStore) -> None:
 def test_restore_checkpoint(store: StateStore) -> None:
     """checkpoint 恢复测试"""
     store.create_project("p1", "Project One", "init")
-    state_dict = {"name": "p1", "phase": "review", "check_results": {"code_written": True}}
-    cp_id = store.write_checkpoint("p1", "review", state_dict)
+    state_dict = {"name": "p1", "phase": "develop", "check_results": {"code_written": True}}
+    cp_id = store.write_checkpoint("p1", "develop", state_dict)
 
     restored = store.restore_checkpoint(cp_id)
     assert restored is not None
-    assert restored["phase"] == "review"
+    assert restored["phase"] == "develop"
     assert restored["check_results"]["code_written"] is True
 
 

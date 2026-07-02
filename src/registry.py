@@ -250,12 +250,7 @@ GREENFIELD_PHASES = [
     ("deploy",     "check_deploy",     False),  # 部署上线
 ]
 
-# Legacy compatibility phases (F005 3-state machine)
-LEGACY_PHASES = [
-    ("review", "check_review", False),  # 代码审核（legacy，兼容旧状态机）
-]
-
-for _name, _check, _evidence in BROWNFIELD_PHASES + GREENFIELD_PHASES + LEGACY_PHASES:
+for _name, _check, _evidence in BROWNFIELD_PHASES + GREENFIELD_PHASES:
     REGISTRY.register_phase(PhaseDef(
         name=_name,
         check_func=_check,
