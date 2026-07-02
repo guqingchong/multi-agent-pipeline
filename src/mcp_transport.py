@@ -30,9 +30,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from message_queue import MessageQueue, Task, PRIORITY_NORMAL
+    from src.queue import Queue, Task
 except (ModuleNotFoundError, ImportError):
-    from src.message_queue import MessageQueue, Task, PRIORITY_NORMAL
+    from queue import Queue, Task
 
 try:
     from adapters import AgentResult, AdapterStatus
@@ -91,7 +91,7 @@ class MCPTask:
         """转换为 message_queue 的 Task 格式"""
         return Task(
             id=self.id,
-            agent_id=self.agent_id,
+            target_agent=self.agent_id,
             task_type=self.task_type,
             context=self.payload,
             priority=self.priority,
@@ -160,7 +160,7 @@ class MCPTransport:
     """
 
     def __init__(self, db_path: str = "mcp_transport.db"):
-        self.mq = MessageQueue(db_path)
+        self.mq = Queue(db_path)
         self._endpoints: Dict[str, AgentEndpoint] = {}
         self._pending: Dict[str, MCPTask] = {}
         self._lock = threading.Lock()  # P0-2: protect _pending concurrent access
@@ -205,7 +205,7 @@ class MCPTransport:
             max_retries=max_retries,
         )
 
-        self.mq.push(task)
+        self.mq.push_sync(task)
 
         task_id = str(task.id) if task.id else f"mcp-{agent_id}-{int(time.time()*1000)}"
         mcp_task = MCPTask(
@@ -225,7 +225,7 @@ class MCPTransport:
 
     def pull(self, agent_id: str) -> Optional[MCPTask]:
         """Agent 端（daemon）：拉取下一个待执行任务"""
-        task = self.mq.pull(agent_id)
+        task = self.mq.pull_sync(agent_id)
         if task is None:
             return None
 
@@ -259,9 +259,9 @@ class MCPTransport:
             }, ensure_ascii=False)
 
             if result.success:
-                self.mq.complete(int_id, {"result": result_data})
+                self.mq.complete_sync(int_id, {"result": result_data})
             else:
-                self.mq.fail(int_id, result.error_message or "Unknown error")
+                self.mq.fail_sync(int_id, result.error_message or "Unknown error")
 
         with self._lock:
             if task_id in self._pending:

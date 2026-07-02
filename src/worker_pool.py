@@ -28,15 +28,11 @@ from typing import Dict, List, Optional, Set
 # ───────────────────────────────────────────────────────────────
 
 try:
-    from agent_daemon import (  # type: ignore[import-not-found]
-        AgentConfig,
-        TASK_TYPE_SHUTDOWN,
-        create_shutdown_task,
-    )
-    from message_queue import MessageQueue, Task  # type: ignore[import-not-found]
-except ImportError:
     from src.agent_daemon import AgentConfig, TASK_TYPE_SHUTDOWN, create_shutdown_task
-    from src.message_queue import MessageQueue, Task
+    from src.queue import Queue, Task
+except (ModuleNotFoundError, ImportError):
+    from agent_daemon import AgentConfig, TASK_TYPE_SHUTDOWN, create_shutdown_task
+    from queue import Queue, Task
 
 # ───────────────────────────────────────────────────────────────
 # Logger
@@ -69,8 +65,8 @@ proj_dir = os.environ["PIPELINE_PROJ_DIR"]
 if proj_dir and proj_dir not in sys.path:
     sys.path.insert(0, proj_dir)
 
-from agent_daemon import AgentDaemon, AgentConfig, TASK_TYPE_SHUTDOWN
-from message_queue import MessageQueue
+from src.agent_daemon import AgentDaemon, AgentConfig, TASK_TYPE_SHUTDOWN
+from src.queue import Queue
 
 agent_id       = os.environ["PIPELINE_AGENT_ID"]
 cli_path       = os.environ.get("PIPELINE_CLI_PATH", "")
@@ -91,7 +87,7 @@ config = AgentConfig(
     max_subtask_timeout=max_timeout,
     max_retries=max_retries,
 )
-mq = MessageQueue(db_path=db_path)
+mq = Queue(db_path=db_path)
 daemon = AgentDaemon(config, mq)
 
 logger = logging.getLogger("worker_pool.agent")
@@ -162,7 +158,7 @@ class WorkerPool:
 
     def __init__(
         self,
-        mq: MessageQueue,
+        mq: Queue,
         *,
         project_dir: Optional[str] = None,
     ) -> None:
@@ -409,7 +405,7 @@ class WorkerPool:
         for agent_id in list(self._workers.keys()):
             try:
                 shutdown_task = create_shutdown_task(agent_id)
-                self.mq.push(shutdown_task)
+                self.mq.push_sync(shutdown_task)
                 logger.info(
                     "WorkerPool enqueued SHUTDOWN for agent_id=%s (task_id=%s)",
                     agent_id,

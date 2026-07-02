@@ -28,11 +28,11 @@ from typing import Any, Dict, Optional
 # Dual-import pattern (package / flat)
 # ───────────────────────────────────────────────────────────────
 try:
-    from message_queue import MessageQueue, Task
-    from checkpointer import Checkpointer
-except ImportError:
-    from src.message_queue import MessageQueue, Task
+    from src.queue import Queue, Task
     from src.checkpointer import Checkpointer
+except (ModuleNotFoundError, ImportError):
+    from queue import Queue, Task
+    from checkpointer import Checkpointer
 
 # ───────────────────────────────────────────────────────────────
 # Logger
@@ -45,7 +45,6 @@ logger = logging.getLogger(__name__)
 # ───────────────────────────────────────────────────────────────
 
 TASK_TYPE_SHUTDOWN = "shutdown"
-VALID_TASK_TYPES = ("code", "review", "test", "shutdown")
 
 # ───────────────────────────────────────────────────────────────
 # Data models
@@ -134,7 +133,7 @@ class AgentDaemon:
     def __init__(
         self,
         config: AgentConfig,
-        mq: MessageQueue,
+        mq: Queue,
         *,
         checkpointer: Optional[Checkpointer] = None,
     ) -> None:
@@ -185,7 +184,7 @@ class AgentDaemon:
                     agent_id,
                     task.id,
                 )
-                self.mq.complete(task.id)
+                self.mq.complete_sync(task.id)
                 self._running = False
                 break
 
@@ -209,7 +208,7 @@ class AgentDaemon:
             A Task if one was claimed, None if the queue is empty.
         """
         try:
-            return self.mq.pull(self.config.agent_id)
+            return self.mq.pull_sync(self.config.agent_id)
         except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as exc:
             logger.error(
                 "AgentDaemon [%s] failed to pull task: %s",
@@ -457,7 +456,7 @@ class AgentDaemon:
 
         try:
             if result.success:
-                self.mq.complete(
+                self.mq.complete_sync(
                     task.id,
                     result={
                         "output": result.output,
@@ -468,7 +467,7 @@ class AgentDaemon:
                     },
                 )
             else:
-                self.mq.fail(task.id, error=result.error)
+                self.mq.fail_sync(task.id, error=result.error)
         except (ValueError, TypeError, KeyError, RuntimeError, OSError, ConnectionError, TimeoutError, ImportError, AttributeError) as exc:
             logger.error(
                 "AgentDaemon [%s] failed to report result for task id=%s: %s",

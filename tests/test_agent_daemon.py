@@ -1,7 +1,9 @@
 """Tests for agent_daemon and subtask_chunker."""
 import os, sys, tempfile
 from pathlib import Path
-SRC = Path(__file__).resolve().parent.parent / "src"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC = PROJECT_ROOT / "src"
+sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(SRC))
 import pytest
 
@@ -42,8 +44,8 @@ class TestAgentConfig:
 class TestExecuteSubtask:
     def test_real_command_success(self):
         from agent_daemon import AgentConfig, AgentDaemon
-        from message_queue import MessageQueue, Task
-        mq = MessageQueue(":memory:")
+        from src.queue import Queue, Task
+        mq = Queue(":memory:")
         cfg = AgentConfig(agent_id="test", cli_path="echo")
         daemon = AgentDaemon(cfg, mq)
         task = Task(target_agent="test", task_type="code", max_retries=0)
@@ -55,8 +57,8 @@ class TestExecuteSubtask:
 
     def test_real_command_failure(self):
         from agent_daemon import AgentConfig, AgentDaemon
-        from message_queue import MessageQueue, Task
-        mq = MessageQueue(":memory:")
+        from src.queue import Queue, Task
+        mq = Queue(":memory:")
         cfg = AgentConfig(agent_id="test", cli_path="python")
         daemon = AgentDaemon(cfg, mq)
         task = Task(target_agent="test", task_type="-c", context={"args":["exit(1)"]}, max_retries=0)
@@ -66,8 +68,8 @@ class TestExecuteSubtask:
 
     def test_command_not_found(self):
         from agent_daemon import AgentConfig, AgentDaemon
-        from message_queue import MessageQueue, Task
-        mq = MessageQueue(":memory:")
+        from src.queue import Queue, Task
+        mq = Queue(":memory:")
         cfg = AgentConfig(agent_id="test", cli_path="/nonexistent/xyz")
         daemon = AgentDaemon(cfg, mq)
         task = Task(target_agent="test", task_type="code", max_retries=0)
@@ -77,8 +79,8 @@ class TestExecuteSubtask:
 
     def test_timeout(self):
         from agent_daemon import AgentConfig, AgentDaemon
-        from message_queue import MessageQueue, Task
-        mq = MessageQueue(":memory:")
+        from src.queue import Queue, Task
+        mq = Queue(":memory:")
         cfg = AgentConfig(agent_id="test", cli_path="python", max_subtask_timeout=1)
         daemon = AgentDaemon(cfg, mq)
         task = Task(target_agent="test", task_type="-c", context={"args":["import time; time.sleep(10)"]}, max_retries=0)
@@ -89,8 +91,8 @@ class TestExecuteSubtask:
 
     def test_build_command(self):
         from agent_daemon import AgentConfig, AgentDaemon
-        from message_queue import MessageQueue, Task
-        mq = MessageQueue(":memory:")
+        from src.queue import Queue, Task
+        mq = Queue(":memory:")
         cfg = AgentConfig(agent_id="test", cli_path="/bin/cli")
         daemon = AgentDaemon(cfg, mq)
         task = Task(target_agent="test", task_type="review", context={"feature_id":"F1","project_dir":"/p","prompt":"hi","file":"f.py","output":"/o.json","args":["-v","-s"]}, max_retries=0)
@@ -102,8 +104,8 @@ class TestExecuteSubtask:
 
     def test_build_env(self):
         from agent_daemon import AgentConfig, AgentDaemon
-        from message_queue import MessageQueue, Task
-        mq = MessageQueue(":memory:")
+        from src.queue import Queue, Task
+        mq = Queue(":memory:")
         cfg = AgentConfig(agent_id="test", cli_path="echo")
         daemon = AgentDaemon(cfg, mq)
         task = Task(target_agent="test", task_type="code", context={"env":{"X":"1"}}, max_retries=0)
@@ -114,8 +116,8 @@ class TestExecuteSubtask:
 class TestRetryLogic:
     def test_retry_exhausts(self):
         from agent_daemon import AgentConfig, AgentDaemon
-        from message_queue import MessageQueue, Task
-        mq = MessageQueue(":memory:")
+        from src.queue import Queue, Task
+        mq = Queue(":memory:")
         cfg = AgentConfig(agent_id="test", cli_path="python", max_retries=3)
         daemon = AgentDaemon(cfg, mq)
         task = Task(target_agent="test", task_type="-c", context={"args":["exit(1)"]}, max_retries=3)
@@ -125,8 +127,8 @@ class TestRetryLogic:
 
     def test_retry_succeeds_second_attempt(self):
         from agent_daemon import AgentConfig, AgentDaemon
-        from message_queue import MessageQueue, Task
-        mq = MessageQueue(":memory:")
+        from src.queue import Queue, Task
+        mq = Queue(":memory:")
         cfg = AgentConfig(agent_id="test", cli_path="python", max_retries=3)
         daemon = AgentDaemon(cfg, mq)
         import tempfile as _tf
@@ -142,8 +144,8 @@ class TestRetryLogic:
 
     def test_retry_respects_task_max(self):
         from agent_daemon import AgentConfig, AgentDaemon
-        from message_queue import MessageQueue, Task
-        mq = MessageQueue(":memory:")
+        from src.queue import Queue, Task
+        mq = Queue(":memory:")
         cfg = AgentConfig(agent_id="test", cli_path="python", max_retries=5)
         daemon = AgentDaemon(cfg, mq)
         task = Task(target_agent="test", task_type="-c", context={"args":["exit(1)"]}, max_retries=2)
@@ -155,13 +157,13 @@ class TestRetryLogic:
 class TestShutdownHandling:
     def test_shutdown_stops_loop(self):
         from agent_daemon import AgentConfig, AgentDaemon, create_shutdown_task
-        from message_queue import MessageQueue
+        from src.queue import Queue
         _tdb = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
         _tdb.close()
         try:
-            mq = MessageQueue(_tdb.name)
+            mq = Queue(_tdb.name)
             cfg = AgentConfig(agent_id="test", cli_path="echo")
-            mq.push(create_shutdown_task("test"))
+            mq.push_sync(create_shutdown_task("test"))
             daemon = AgentDaemon(cfg, mq)
             daemon.run()
             assert daemon._running is False
@@ -170,8 +172,8 @@ class TestShutdownHandling:
 
     def test_request_shutdown(self):
         from agent_daemon import AgentConfig, AgentDaemon
-        from message_queue import MessageQueue
-        mq = MessageQueue(":memory:")
+        from src.queue import Queue
+        mq = Queue(":memory:")
         cfg = AgentConfig(agent_id="test", cli_path="echo")
         daemon = AgentDaemon(cfg, mq)
         daemon._running = True
