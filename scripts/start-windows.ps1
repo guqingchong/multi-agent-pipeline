@@ -8,10 +8,28 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$root = Split-Path -Parent $PSScriptRoot
+
+# Source local environment overrides (copy env.example.ps1 to env.ps1)
+. "$PSScriptRoot\env.ps1"
+
+# Sensible defaults for anything the user did not configure in env.ps1
+if (-not $env:AGENT_MOCK) {
+    $env:AGENT_MOCK = "true"
+}
+if (-not $env:MULTI_AGENT_PIPELINE_BASE_DIR) {
+    $env:MULTI_AGENT_PIPELINE_BASE_DIR = "$root\projects"
+}
+
+# Allow -BaseDir parameter to override the env default
+if ($BaseDir) {
+    $env:MULTI_AGENT_PIPELINE_BASE_DIR = (Resolve-Path $BaseDir).Path
+}
+$env:PIPELINE__PIPELINE_MODE = $Mode
+$env:PYTHONPATH = "$root\src"
 
 # 1. Locate or create virtual environment
-$VenvDir = Join-Path $ProjectRoot ".venv"
+$VenvDir = Join-Path $root ".venv"
 if (-not (Test-Path $VenvDir)) {
     Write-Host "Creating virtual environment at $VenvDir ..."
     python -m venv $VenvDir
@@ -28,36 +46,26 @@ if (Test-Path $Activate) {
 # 3. Upgrade pip and install dependencies
 Write-Host "Installing dependencies ..."
 python -m pip install --upgrade pip | Out-Null
-python -m pip install -r (Join-Path $ProjectRoot "requirements.txt") | Out-Null
-
-# 4. Environment defaults
-if (-not $BaseDir) {
-    $BaseDir = $ProjectRoot
-}
-$env:MULTI_AGENT_PIPELINE_BASE_DIR = (Resolve-Path $BaseDir).Path
-$env:PIPELINE__PIPELINE_MODE = $Mode
-if (-not $env:AGENT_MOCK) {
-    $env:AGENT_MOCK = "true"
-}
+python -m pip install -r (Join-Path $root "requirements.txt") | Out-Null
 
 Write-Host "MULTI_AGENT_PIPELINE_BASE_DIR = $env:MULTI_AGENT_PIPELINE_BASE_DIR"
 Write-Host "PIPELINE__PIPELINE_MODE       = $env:PIPELINE__PIPELINE_MODE"
 Write-Host "AGENT_MOCK                    = $env:AGENT_MOCK"
 
-# 5. Registry readiness check
-$RegistryCheck = python -c "from src.registry import REGISTRY; print('phases:', len(REGISTRY.list_phases()), 'agents:', len(REGISTRY.list_agents()))"
+# 4. Registry readiness check
+$RegistryCheck = python -c "from registry import REGISTRY; print('phases:', len(REGISTRY.list_phases()), 'agents:', len(REGISTRY.list_agents()))"
 if ($LASTEXITCODE -ne 0) {
     throw "Registry readiness check failed."
 }
 Write-Host "Registry ready: $RegistryCheck"
 
-# 6. Show unified CLI help
+# 5. Show unified CLI help
 Write-Host ""
 Write-Host "=== pipeline.py help ==="
-python (Join-Path $ProjectRoot "src\pipeline.py") --help
+python (Join-Path $root "src\pipeline.py") --help
 Write-Host ""
 Write-Host "=== bridge_cli.py help ==="
-python (Join-Path $ProjectRoot "src\bridge_cli.py") --help
+python (Join-Path $root "src\bridge_cli.py") --help
 
 Write-Host ""
 Write-Host "Start complete. Run the API with .\scripts\start-api.ps1"

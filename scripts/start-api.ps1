@@ -8,23 +8,34 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$root = Split-Path -Parent $PSScriptRoot
+
+# Source local environment overrides (copy env.example.ps1 to env.ps1)
+. "$PSScriptRoot\env.ps1"
+
+# Sensible defaults for anything the user did not configure in env.ps1
+if (-not $env:AGENT_MOCK) {
+    $env:AGENT_MOCK = "true"
+}
+if (-not $env:MULTI_AGENT_PIPELINE_BASE_DIR) {
+    $env:MULTI_AGENT_PIPELINE_BASE_DIR = "$root\projects"
+}
+
+# Allow -BaseDir parameter to override the env default
+if ($BaseDir) {
+    $env:MULTI_AGENT_PIPELINE_BASE_DIR = (Resolve-Path $BaseDir).Path
+}
+$env:PYTHONPATH = "$root\src"
 
 # 1. Activate virtual environment if present
-$VenvDir = Join-Path $ProjectRoot ".venv"
+$VenvDir = Join-Path $root ".venv"
 $Activate = Join-Path $VenvDir "Scripts\Activate.ps1"
 if (Test-Path $Activate) {
     . $Activate
 }
 
-# 2. Ensure base directory is set
-if (-not $BaseDir) {
-    $BaseDir = $ProjectRoot
-}
-$env:MULTI_AGENT_PIPELINE_BASE_DIR = (Resolve-Path $BaseDir).Path
-
 Write-Host "Starting Multi-Agent Pipeline API on port $Port ..."
 Write-Host "Base directory: $env:MULTI_AGENT_PIPELINE_BASE_DIR"
 
-# 3. Start uvicorn
-uvicorn src.main:app --host 0.0.0.0 --port $Port --reload
+# 2. Start uvicorn bound to localhost only
+uvicorn src.main:app --host 127.0.0.1 --port $Port --reload

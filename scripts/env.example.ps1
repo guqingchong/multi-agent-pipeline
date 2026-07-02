@@ -1,7 +1,7 @@
 # env.example.ps1 — Environment variable template for Windows
 #
-# Copy this file to .env.ps1, customize values, then run:
-#   . .\env.ps1
+# Copy this file to scripts/env.ps1, customize values, then run:
+#   . .\scripts\env.ps1
 # before executing pipeline.py / bridge_cli.py / start-api.ps1.
 
 # Project base directory where all projects live.
