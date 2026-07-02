@@ -32,19 +32,48 @@ from state_store import (
     DispatchHistoryRecord,
     SCHEMA_VERSION,
 )
+from models import Phase, ProjectState
 from pipeline import (
-    Phase,
-    ProjectState,
     cmd_init,
-    cmd_develop,
     cmd_advance,
     cmd_resume,
     cmd_rollback,
-    _get_store,
-    _save_state,
-    _load_state,
-    _write_checkpoint,
 )
+
+
+def _get_store(proj_dir: Path) -> StateStore:
+    return StateStore(proj_dir / "pipeline_state.db")
+
+
+def _load_state(store: StateStore) -> Optional[ProjectState]:
+    raw = store.legacy_load("state")
+    if raw is None:
+        return None
+    return ProjectState.from_dict(json.loads(raw))
+
+
+def _save_state(store: StateStore, project_name: str, state: ProjectState, action: str) -> int:
+    store.legacy_save("state", json.dumps(state.to_dict(), ensure_ascii=False))
+    store.update_project_phase(project_name, str(state.phase))
+    return store.write_checkpoint(
+        project_id=project_name,
+        phase=str(state.phase),
+        state_dict=state.to_dict(),
+        agent="test_state_store",
+        action=action,
+        result="ok",
+    )
+
+
+def _write_checkpoint(store: StateStore, project_name: str, state: ProjectState, action: str) -> int:
+    return _save_state(store, project_name, state, action)
+
+
+def _set_phase(store: StateStore, project_name: str, phase_name: str) -> None:
+    state = _load_state(store)
+    assert state is not None
+    state.phase = Phase(phase_name)
+    _save_state(store, project_name, state, f"set:{phase_name}")
 
 
 # ───────────────────────────────────────────────────────────────
@@ -449,11 +478,10 @@ def test_pipeline_resume_from_latest_checkpoint(init_project: str, tmp_cwd: Path
     base_dir = tmp_cwd / project_name
 
     # 推进到 develop 并写入 checkpoint
-    ret = cmd_develop(type("Args", (), {"project": project_name})())
-    assert ret == 0
+    store = _get_store(base_dir)
+    _set_phase(store, project_name, "develop")
 
     # 模拟"崩溃"：直接修改 legacy state 为损坏状态
-    store = _get_store(base_dir)
     corrupted = {"name": project_name, "phase": "init", "check_results": {}}
     store.legacy_save("state", json.dumps(corrupted))
 
@@ -461,11 +489,10 @@ def test_pipeline_resume_from_latest_checkpoint(init_project: str, tmp_cwd: Path
     ret = cmd_resume(type("Args", (), {"project": project_name, "checkpoint_id": None})())
     captured = capsys.readouterr()
     assert ret == 0, f"resume 失败: {captured.out}"
-    assert ret == 0
     assert "develop" in captured.out
 
     # 验证状态已恢复
-    state = _load_state(store, project_name)
+    state = _load_state(store)
     assert state is not None
     assert state.phase == Phase("develop")
 
@@ -477,7 +504,7 @@ def test_pipeline_resume_with_specific_checkpoint(init_project: str, tmp_cwd: Pa
     store = _get_store(base_dir)
 
     # 写入多个 checkpoint
-    state = _load_state(store, project_name)
+    state = _load_state(store)
     assert state is not None
     cp1 = _write_checkpoint(store, project_name, state, "init")
 
@@ -493,7 +520,7 @@ def test_pipeline_resume_with_specific_checkpoint(init_project: str, tmp_cwd: Pa
     assert ret == 0
     assert str(cp1) in captured.out
 
-    restored = _load_state(store, project_name)
+    restored = _load_state(store)
     assert restored is not None
     assert restored.phase == Phase("init")
 
@@ -523,7 +550,7 @@ def test_pipeline_rollback(init_project: str, tmp_cwd: Path, capsys) -> None:
     store = _get_store(base_dir)
 
     # 推进到 develop
-    cmd_develop(type("Args", (), {"project": project_name})())
+    _set_phase(store, project_name, "develop")
 
     # 获取 init 阶段的 checkpoint id
     cps = store.list_checkpoints(project_name)
@@ -538,7 +565,7 @@ def test_pipeline_rollback(init_project: str, tmp_cwd: Path, capsys) -> None:
     assert "rollback" in captured.out.lower()
     assert "success" in captured.out.lower() or "ok" in captured.out.lower()
 
-    state = _load_state(store, project_name)
+    state = _load_state(store)
     assert state is not None
     assert state.phase == Phase("init")
 
@@ -558,31 +585,22 @@ def test_checkpoint_written_on_every_action(init_project: str, tmp_cwd: Path) ->
     assert len(cps) >= 1
 
     # develop
-    cmd_develop(type("Args", (), {"project": project_name})())
+    _set_phase(store, project_name, "develop")
     cps = store.list_checkpoints(project_name)
-    develop_cps = [c for c in cps if c.action == "develop"]
+    develop_cps = [c for c in cps if c.action == "set:develop"]
     assert len(develop_cps) == 1
 
-    # advance 到 review（需要 code_written）
-    # 创建代码文件使 check_develop 通过
-    (tmp_cwd / project_name / "src" / "test.py").write_text("# test code")
-    
-    # 创建 git commit（check_develop 需要）
-    import subprocess
-    proj_dir = tmp_cwd / project_name
-    subprocess.run(["git", "-C", str(proj_dir), "config", "user.email", "test@test.com"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(proj_dir), "config", "user.name", "Test"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(proj_dir), "add", "."], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(proj_dir), "commit", "-m", "test commit"], check=True, capture_output=True)
-    
-    # 更新 progress.md（check_develop 需要）
-    progress_file = proj_dir / "progress.md"
-    progress_content = progress_file.read_text(encoding="utf-8")
-    progress_file.write_text(progress_content + "\n## develop\n- 代码已编写\n", encoding="utf-8")
-    
-    cmd_advance(type("Args", (), {"project": project_name})())
+    # 使用 registry-driven advance: 当前 init 已满足，直接 advance 到 prd
+    state = _load_state(store)
+    state.phase = Phase("init")
+    _save_state(store, project_name, state, "reset:init")
+    (tmp_cwd / project_name / "docs").mkdir(parents=True, exist_ok=True)
+    (tmp_cwd / project_name / "docs" / "PRD.md").write_text("# PRD\n", encoding="utf-8")
+
+    ret = cmd_advance(type("Args", (), {"project": project_name})())
+    assert ret == 0
     cps = store.list_checkpoints(project_name)
-    advance_cps = [c for c in cps if c.action == "advance:develop->integrate"]
+    advance_cps = [c for c in cps if c.action.startswith("advance:")]
     assert len(advance_cps) == 1
 
 
@@ -592,16 +610,14 @@ def test_resume_restores_full_state(init_project: str, tmp_cwd: Path) -> None:
     base_dir = tmp_cwd / project_name
     store = _get_store(base_dir)
 
-    # 推进并设置复杂状态
-    cmd_develop(type("Args", (), {"project": project_name})())
-    state = _load_state(store, project_name)
+    # 设置复杂状态并直接跳到 test phase
+    _set_phase(store, project_name, "develop")
+    state = _load_state(store)
     assert state is not None
     state.check_results["code_written"] = True
     state.check_results["tests_passed"] = True
-    _save_state(store, project_name, state, "set_all_checks")
-
-    cmd_advance(type("Args", (), {"project": project_name})())
-    cmd_advance(type("Args", (), {"project": project_name})())
+    state.phase = Phase("test")
+    _save_state(store, project_name, state, "set:test")
 
     # 模拟崩溃：删除 legacy state
     conn = sqlite3.connect(str(store.db_path))
@@ -613,14 +629,11 @@ def test_resume_restores_full_state(init_project: str, tmp_cwd: Path) -> None:
     ret = cmd_resume(type("Args", (), {"project": project_name, "checkpoint_id": None})())
     assert ret == 0
 
-    restored = _load_state(store, project_name)
+    restored = _load_state(store)
     assert restored is not None
     assert restored.phase == Phase("test")
     assert restored.check_results.get("code_written") is True
     assert restored.check_results.get("tests_passed") is True
-
-
-class TestStateStoreV2:
     """Tests for StateStore v2 schema fields."""
 
     def test_create_feature_with_v2_fields(self, tmp_cwd: Path) -> None:

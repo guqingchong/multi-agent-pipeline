@@ -2,6 +2,7 @@
 
 import os
 import sys
+import json
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,12 @@ from bridge_cli import (
     cmd_suggest,
     cmd_inspect,
     cmd_audit_report,
+    cmd_init,
+    cmd_advance,
+    cmd_status,
+    cmd_rollback_phase,
+    cmd_approve,
+    cmd_mark_tests,
 )
 from state_store import StateStore
 
@@ -114,3 +121,79 @@ class TestCmdAuditReport:
         assert result["logs"][0]["phase"] == "plan"
         assert result["logs"][0]["event"] == "inspector_audit"
         assert result["logs"][0]["details"]["verdict"] == "pass"
+
+
+class TestDirectPipelineCommands:
+    """Bridge CLI should call PhaseFlow/StateStore directly, not pipeline.py."""
+
+    def test_cmd_init_creates_project(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MULTI_AGENT_PIPELINE_BASE_DIR", str(tmp_path))
+        result = cmd_init("demo", description="Test project", stack="Python")
+
+        assert result["command"] == "init"
+        assert result["return_code"] == 0
+        assert (tmp_path / "demo" / "pipeline_state.db").exists()
+        assert (tmp_path / "demo" / "SOUL.md").exists()
+
+    def test_cmd_status_after_init(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MULTI_AGENT_PIPELINE_BASE_DIR", str(tmp_path))
+        cmd_init("demo")
+        result = cmd_status("demo")
+
+        assert result["command"] == "status"
+        assert result["return_code"] == 0
+        assert result["phase"] == "init"
+
+    def test_cmd_advance_init_to_prd(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MULTI_AGENT_PIPELINE_BASE_DIR", str(tmp_path))
+        cmd_init("demo")
+        (tmp_path / "demo" / "docs").mkdir(parents=True)
+        (tmp_path / "demo" / "docs" / "PRD.md").write_text("# PRD\n", encoding="utf-8")
+
+        result = cmd_advance("demo")
+        assert result["command"] == "advance"
+        assert result["success"] is True
+        assert "init" in result["message"]
+        assert "prd" in result["message"]
+        assert cmd_status("demo")["phase"] == "prd"
+
+    def test_cmd_rollback_phase_requires_approval(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MULTI_AGENT_PIPELINE_BASE_DIR", str(tmp_path))
+        cmd_init("demo")
+        # Advance to design via state store so rollback to init requires approval.
+        from state_store import StateStore
+        db_path = tmp_path / "demo" / "pipeline_state.db"
+        store = StateStore(db_path)
+        raw = store.legacy_load("state")
+        state = json.loads(raw) if raw else {}
+        state["phase"] = "design"
+        store.legacy_save("state", json.dumps(state, ensure_ascii=False))
+        store.update_project_phase("demo", "design")
+
+        result = cmd_rollback_phase("demo", "init", approved=False)
+        assert result["success"] is False
+        assert result["return_code"] == 1
+
+    def test_cmd_approve_design_and_accept(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MULTI_AGENT_PIPELINE_BASE_DIR", str(tmp_path))
+        cmd_init("demo")
+
+        result = cmd_approve("demo", "design")
+        assert result["success"] is True
+        result = cmd_approve("demo", "accept")
+        assert result["success"] is True
+
+    def test_cmd_mark_tests(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MULTI_AGENT_PIPELINE_BASE_DIR", str(tmp_path))
+        cmd_init("demo")
+
+        result = cmd_mark_tests("demo", passed=True)
+        assert result["success"] is True
+        assert result["passed"] is True
+
+    def test_no_pipeline_proxy_imports(self):
+        """bridge_cli.py must not import pipeline command functions."""
+        import bridge_cli as bc
+        assert not hasattr(bc, "pipeline_cmd_init")
+        assert not hasattr(bc, "pipeline_cmd_advance")
+        assert not hasattr(bc, "pipeline_cmd_status")
