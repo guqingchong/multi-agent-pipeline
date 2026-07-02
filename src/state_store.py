@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS traces (
 CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT,
+    phase TEXT,
+    event TEXT,
+    details_json TEXT DEFAULT '{}',
     agent TEXT,
     command TEXT,
     allowed BOOLEAN,
@@ -212,10 +215,20 @@ class AuditLogRecord:
     """audit_logs table record"""
     id: Optional[int] = None
     project_id: Optional[str] = None
+    phase: Optional[str] = None
+    event: Optional[str] = None
+    details_json: str = "{}"
     agent: Optional[str] = None
     command: Optional[str] = None
     allowed: Optional[bool] = None
     created_at: Optional[str] = None
+
+    def details(self) -> Dict[str, Any]:
+        """Return parsed details_json as a dict."""
+        try:
+            return json.loads(self.details_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return {}
 
 
 @dataclass
@@ -311,6 +324,17 @@ class StateStore:
                         END;
                     END;
                 """)
+
+            # Migrate audit_logs table: add structured audit columns
+            cursor = conn.execute("PRAGMA table_info(audit_logs)")
+            audit_columns = {row["name"] for row in cursor.fetchall()}
+            if "phase" not in audit_columns:
+                conn.execute("ALTER TABLE audit_logs ADD COLUMN phase TEXT")
+            if "event" not in audit_columns:
+                conn.execute("ALTER TABLE audit_logs ADD COLUMN event TEXT")
+            if "details_json" not in audit_columns:
+                conn.execute("ALTER TABLE audit_logs ADD COLUMN details_json TEXT DEFAULT '{}'")
+
             conn.commit()
 
     # ── projects ──
@@ -637,29 +661,61 @@ class StateStore:
             cur = conn.execute(
                 """
                 INSERT INTO audit_logs
-                (project_id, agent, command, allowed, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                (project_id, phase, event, details_json, agent, command, allowed, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (log.project_id, log.agent, log.command, log.allowed, self._now()),
+                (
+                    log.project_id,
+                    log.phase,
+                    log.event,
+                    log.details_json,
+                    log.agent,
+                    log.command,
+                    log.allowed,
+                    self._now(),
+                ),
             )
             conn.commit()
             return cur.lastrowid or 0
 
-    def list_audit_logs(self, project_id: str, limit: int = 100) -> List[AuditLogRecord]:
+    def log_audit(
+        self,
+        project_id: str,
+        phase: str,
+        event: str,
+        details: Dict[str, Any],
+    ) -> int:
+        """Write a structured audit event to audit_logs."""
+        log = AuditLogRecord(
+            project_id=project_id,
+            phase=phase,
+            event=event,
+            details_json=json.dumps(details, ensure_ascii=False, default=str),
+        )
+        return self.write_audit_log(log)
+
+    def list_audit_logs(
+        self,
+        project_id: str,
+        event: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[AuditLogRecord]:
         with self._conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM audit_logs
-                WHERE project_id = ?
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (project_id, limit),
-            ).fetchall()
+            query = "SELECT * FROM audit_logs WHERE project_id = ?"
+            params: List[Any] = [project_id]
+            if event is not None:
+                query += " AND event = ?"
+                params.append(event)
+            query += " ORDER BY id DESC LIMIT ?"
+            params.append(limit)
+            rows = conn.execute(query, params).fetchall()
         return [
             AuditLogRecord(
                 id=r["id"],
                 project_id=r["project_id"],
+                phase=r["phase"],
+                event=r["event"],
+                details_json=r["details_json"],
                 agent=r["agent"],
                 command=r["command"],
                 allowed=r["allowed"],

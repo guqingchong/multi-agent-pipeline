@@ -361,7 +361,44 @@ def cmd_mode(project_name: str = "") -> Dict[str, Any]:
     }
 
 
-def cmd_debate(session_id: str = "", protocol: str = "NI", topic: str = "", participants: List[str] = None, 
+def cmd_inspect(project_name: str, phase: str = "") -> Dict[str, Any]:
+    """Run independent audit on current or given phase."""
+    from inspector import Inspector
+    from phase_flow import PhaseFlow
+
+    base_dir = get_base_dir()
+    project_dir = base_dir / project_name
+    inspector = Inspector(project_dir)
+    target_phase = phase or PhaseFlow(project_name, base_dir).current_phase()
+    report = inspector.audit(target_phase)
+    return {"command": "inspect", "project": project_name, "phase": target_phase, "report": report.to_dict()}
+
+
+def cmd_audit_report(project_name: str) -> Dict[str, Any]:
+    """Show inspector audit history."""
+    from state_store import StateStore
+
+    base_dir = get_base_dir()
+    db_path = base_dir / project_name / "pipeline_state.db"
+    store = StateStore(db_path)
+    logs = store.list_audit_logs(project_name, event="inspector_audit", limit=50)
+    return {
+        "command": "audit-report",
+        "project": project_name,
+        "logs": [
+            {
+                "id": log.id,
+                "phase": log.phase,
+                "event": log.event,
+                "details": log.details(),
+                "created_at": log.created_at,
+            }
+            for log in logs
+        ],
+    }
+
+
+def cmd_debate(session_id: str = "", protocol: str = "NI", topic: str = "", participants: List[str] = None,
                iterations: int = 10, output_file: str = "") -> Dict[str, Any]:
     """执行辩论协议。
     
@@ -609,6 +646,17 @@ def build_parser() -> argparse.ArgumentParser:
     mode_parser.add_argument("project_pos", nargs="?", help="Project name (positional, for backward compatibility)")
     mode_parser.add_argument("--project", help="Project name (optional)")
 
+    # inspect command
+    inspect_parser = subparsers.add_parser("inspect", help="Run independent audit on current or given phase")
+    inspect_parser.add_argument("project_pos", nargs="?", help="Project name (positional, for backward compatibility)")
+    inspect_parser.add_argument("--project", help="Project name")
+    inspect_parser.add_argument("--phase", default="", help="Phase to audit (default: current)")
+
+    # audit-report command
+    audit_report_parser = subparsers.add_parser("audit-report", help="Show inspector audit history")
+    audit_report_parser.add_argument("project_pos", nargs="?", help="Project name (positional, for backward compatibility)")
+    audit_report_parser.add_argument("--project", help="Project name")
+
     # debate command
     debate_parser = subparsers.add_parser("debate", help="Run debate protocol")
     debate_parser.add_argument("--session", help="Session ID (optional, creates new session if not provided)")
@@ -650,7 +698,7 @@ def main():
         args.prompt = args.prompt_pos
 
     # Validate required arguments
-    if args.command in ["load", "suggest", "full", "init", "advance", "status", "resume", "rollback", "rollback-phase", "approve", "mark-tests"]:
+    if args.command in ["load", "suggest", "full", "init", "advance", "status", "resume", "rollback", "rollback-phase", "approve", "mark-tests", "inspect", "audit-report"]:
         if not args.project:
             print(json.dumps({"error": f"Project name is required for {args.command} command"}))
             sys.exit(1)
@@ -710,6 +758,10 @@ def main():
     elif args.command == "mark-tests":
         pipeline_args = argparse.Namespace(project=args.project, passed=args.passed)
         result = {"command": "mark-tests", "return_code": pipeline_cmd_mark_tests(pipeline_args)}
+    elif args.command == "inspect":
+        result = cmd_inspect(args.project, phase=args.phase)
+    elif args.command == "audit-report":
+        result = cmd_audit_report(args.project)
     elif args.command == "mode":
         result = cmd_mode(args.project)
     elif args.command == "debate":

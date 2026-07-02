@@ -47,6 +47,11 @@ try:
 except (ModuleNotFoundError, ImportError):
     from src.workflow import get_template
 
+try:
+    from inspector import Inspector, AuditVerdict
+except (ModuleNotFoundError, ImportError):
+    from src.inspector import Inspector, AuditVerdict
+
 
 # ───────────────────────────────────────────────────────────────
 # Phase order resolution
@@ -174,7 +179,9 @@ class PhaseFlow:
 
         1. 对当前 phase 执行 check
         2. 未通过则 BLOCK
-        3. 通过则更新 phase 并写入 checkpoint
+        3. 通过则调用 Inspector 独立审计
+        4. Inspector veto 则 BLOCK
+        5. 通过则更新 phase 并写入 checkpoint
         """
         phase = self.current_phase()
         idx = self.phase_order.index(phase)
@@ -186,6 +193,13 @@ class PhaseFlow:
         if not passed:
             return False, f"check 未通过，无法从 {phase} 推进: {msg}"
 
+        # 独立审计（Inspector）
+        inspector = Inspector(self.proj_dir)
+        report = inspector.audit(phase)
+        self._store_audit_report(report)
+        if report.verdict == AuditVerdict.VETO:
+            return False, f"Inspector veto on phase {phase}: {report.findings}"
+
         next_phase = self.phase_order[idx + 1]
 
         # 更新状态
@@ -196,6 +210,15 @@ class PhaseFlow:
         self._write_checkpoint(state, f"advance:{phase}->{next_phase}")
 
         return True, f"从 {phase} 推进到 {next_phase}"
+
+    def _store_audit_report(self, report) -> None:
+        """将 Inspector 审计报告写入 audit_logs。"""
+        self.store.log_audit(
+            project_id=self.project_name,
+            phase=report.phase,
+            event="inspector_audit",
+            details=report.to_dict(),
+        )
 
     def rollback(self, target_phase: str, approved: bool = False) -> Tuple[bool, str]:
         """回退到指定 phase
