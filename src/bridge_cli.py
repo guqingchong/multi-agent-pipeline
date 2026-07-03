@@ -25,6 +25,7 @@ Usage:
   python bridge_cli.py inspect --project <project_name> --phase [phase]
   python bridge_cli.py audit-report --project <project_name>
   python bridge_cli.py debate --topic <topic> --participants <p1,p2>
+  python bridge_cli.py mcp-serve                  # Start stdio MCP server for Hermes
 """
 
 from __future__ import annotations
@@ -809,6 +810,10 @@ def build_parser() -> argparse.ArgumentParser:
                               help="Maximum number of iterations (default: 10)")
     debate_parser.add_argument("--output-file", help="File to save the debate output (optional)")
 
+    # mcp-serve command
+    mcp_serve_parser = subparsers.add_parser("mcp-serve", help="Start stdio MCP server for Hermes integration")
+    mcp_serve_parser.add_argument("--log-file", help="Optional file to log MCP traffic")
+
     return parser
 
 
@@ -891,11 +896,15 @@ def main():
             iterations=args.iterations,
             output_file=args.output_file
         )
+    elif args.command == "mcp-serve":
+        from mcp_stdio_server import run_stdio_server
+        run_stdio_server()
+        return
     else:
         print(json.dumps({"error": f"Unknown command: {args.command}", "available": [
             "load", "route", "suggest", "full", "check-hermes", "dispatch",
             "init", "advance", "status", "resume", "rollback", "rollback-phase",
-            "approve", "mark-tests", "mode", "inspect", "audit-report", "debate"
+            "approve", "mark-tests", "mode", "inspect", "audit-report", "debate", "mcp-serve"
         ]}))
         sys.exit(1)
 
